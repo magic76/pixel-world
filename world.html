@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pixel World</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #e0e0e0;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #top-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px; background: #16213e;
+    border-bottom: 2px solid #0f3460; z-index: 10; flex-shrink: 0;
+  }
+  .bar-label { font-size: 13px; color: #8899aa; }
+  .separator { width: 1px; height: 20px; background: #0f3460; }
+  #top-bar input {
+    font-size: 13px; border: 1px solid #0f3460; border-radius: 6px;
+    padding: 5px 10px; background: #1a1a2e; color: #e0e0e0; outline: none;
+  }
+  #top-bar input:focus { border-color: #e94560; }
+  #status { font-size: 12px; color: #53d769; margin-left: auto; }
+  #online-count { font-size: 12px; color: #8899aa; }
+
+  /* Lobby */
+  #lobby-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(10,10,20,0.85);
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(8px);
+  }
+  #lobby-overlay.hidden { display: none; }
+  #lobby {
+    background: #16213e; border: 2px solid #0f3460; border-radius: 16px;
+    padding: 36px 40px; width: 400px; text-align: center;
+  }
+  #lobby h1 { font-size: 28px; margin-bottom: 6px; color: #fff; }
+  #lobby p { font-size: 13px; color: #8899aa; margin-bottom: 24px; }
+  #lobby input {
+    width: 100%; padding: 10px 14px; font-size: 15px;
+    border: 2px solid #0f3460; border-radius: 10px;
+    background: #1a1a2e; color: #e0e0e0; outline: none;
+    margin-bottom: 12px; text-align: center;
+  }
+  #lobby input:focus { border-color: #e94560; }
+  #lobby input::placeholder { color: #445; }
+  .lobby-btn {
+    display: block; width: 100%; padding: 12px; font-size: 15px;
+    font-weight: 700; border: none; border-radius: 10px;
+    cursor: pointer; margin-bottom: 10px; transition: background .2s, transform .1s;
+  }
+  .lobby-btn:active { transform: scale(0.97); }
+  .btn-create { background: #e94560; color: #fff; }
+  .btn-create:hover { background: #d63b54; }
+  .btn-join { background: #0f3460; color: #e0e0e0; }
+  .btn-join:hover { background: #1a4a80; }
+  .btn-join:disabled { opacity: 0.4; cursor: not-allowed; }
+  #lobby-status { font-size: 13px; color: #e94560; margin-top: 8px; min-height: 20px; }
+
+  .room-code {
+    font-size: 18px; color: #f0ad4e; font-weight: 900;
+    letter-spacing: 2px; cursor: pointer;
+  }
+  .room-code:hover { color: #ffc107; }
+  .copy-hint {
+    font-size: 11px; color: #53d769; opacity: 0;
+    transition: opacity .3s; margin-left: 4px;
+  }
+  .copy-hint.show { opacity: 1; }
+
+  /* Mic button */
+  #mic-btn {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 2px solid #0f3460; background: #1a1a2e;
+    color: #8899aa; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all .2s; position: relative;
+  }
+  #mic-btn.active { background: #e94560; border-color: #e94560; color: #fff; }
+  #mic-btn:hover { border-color: #e94560; }
+
+  /* Game */
+  #game-container { flex: 1; position: relative; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+
+  #chat-input-container {
+    position: absolute; bottom: 20px; left: 50%;
+    transform: translateX(-50%); z-index: 10;
+  }
+  #chat-input {
+    width: 360px; padding: 10px 16px; border-radius: 20px;
+    border: 2px solid #0f3460; background: rgba(22,33,62,0.92);
+    color: #e0e0e0; font-size: 14px; outline: none; backdrop-filter: blur(6px);
+  }
+  #chat-input:focus { border-color: #e94560; }
+  #chat-input::placeholder { color: #556; }
+
+  #help-hint {
+    position: absolute; bottom: 64px; left: 50%;
+    transform: translateX(-50%); font-size: 12px;
+    color: #556; pointer-events: none; text-align: center;
+  }
+
+  #notifications {
+    position: absolute; top: 10px; left: 50%;
+    transform: translateX(-50%); z-index: 20;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    pointer-events: none;
+  }
+  .notif {
+    padding: 6px 16px; background: rgba(22,33,62,0.9);
+    border: 1px solid #0f3460; border-radius: 20px;
+    font-size: 13px; color: #e0e0e0; backdrop-filter: blur(4px);
+    animation: notifIn .3s ease-out, notifOut .5s 2.5s ease-in forwards;
+  }
+  @keyframes notifIn { from { opacity:0; transform:translateY(-10px); } }
+  @keyframes notifOut { to { opacity:0; transform:translateY(-10px); } }
+
+  #player-list {
+    position: absolute; top: 10px; left: 10px; z-index: 15;
+    background: rgba(22,33,62,0.85); border: 1px solid #0f3460;
+    border-radius: 10px; padding: 10px 14px; min-width: 140px;
+    backdrop-filter: blur(4px);
+  }
+  #player-list h3 {
+    font-size: 11px; color: #8899aa; text-transform: uppercase;
+    letter-spacing: 1px; margin-bottom: 6px;
+  }
+  .pl-entry { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 0; }
+  .pl-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .pl-hp { color: #e94560; font-size: 11px; margin-left: auto; }
+  .pl-mic { font-size: 11px; margin-left: 2px; }
+</style>
+</head>
+<body>
+
+<div id="lobby-overlay">
+  <div id="lobby">
+    <h1>Pixel World</h1>
+    <p>Create a room or join a friend's room</p>
+    <input id="lobby-name" type="text" placeholder="Your name" maxlength="12">
+    <button class="lobby-btn btn-create" onclick="createRoom()">Create Room</button>
+    <div style="display:flex;gap:8px">
+      <input id="lobby-room" type="text" placeholder="Room code" maxlength="6"
+             style="text-transform:uppercase; letter-spacing:2px; font-weight:700">
+      <button class="lobby-btn btn-join" id="join-btn" onclick="joinRoom()" style="width:120px;flex-shrink:0" disabled>Join</button>
+    </div>
+    <div id="lobby-status"></div>
+  </div>
+</div>
+
+<div id="top-bar">
+  <span class="bar-label">Room:</span>
+  <span class="room-code" id="room-code" onclick="copyRoomCode()" title="Click to copy">---</span>
+  <span class="copy-hint" id="copy-hint">Copied!</span>
+  <div class="separator"></div>
+  <span class="bar-label">Name:</span>
+  <input id="name-input" type="text" placeholder="Name" maxlength="12" style="width:100px">
+  <div class="separator"></div>
+  <button id="mic-btn" onclick="toggleMic()" title="Toggle voice chat">🎤</button>
+  <span id="online-count"></span>
+  <span id="status">● Offline</span>
+</div>
+
+<div id="game-container">
+  <canvas id="canvas"></canvas>
+  <div id="notifications"></div>
+  <div id="player-list">
+    <h3>Players</h3>
+    <div id="pl-entries"></div>
+  </div>
+  <div id="help-hint">Arrow keys to move · Type to chat · [ = ] to attack · 🎤 for voice</div>
+  <div id="chat-input-container">
+    <input id="chat-input" type="text" placeholder="Type to chat..." maxlength="100">
+  </div>
+</div>
+
+<div id="audio-container" style="display:none"></div>
+
+<script>
+const TILE = 32;
+const MAP_COLS = 50;
+const MAP_ROWS = 38;
+const MAP_W = MAP_COLS * TILE;
+const MAP_H = MAP_ROWS * TILE;
+const SPEED = 3;
+const CHAT_DURATION = 6000;
+const PEER_PREFIX = 'pxworld-';
+const MAX_HP = 4;
+const ATTACK_RANGE = 42;
+const ATTACK_WIDTH = 34;
+const ATTACK_COOLDOWN = 500;
+const GHOST_DURATION = 3000;
+const COLORS = [
+  '#e94560','#53d769','#5bc0de','#f0ad4e','#d9534f',
+  '#9b59b6','#1abc9c','#e67e22','#2ecc71','#3498db',
+];
+
+// ─── Seeded Map ───
+function seededRandom(seed) {
+  let s = seed;
+  return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+}
+
+function generateMap(seed) {
+  const rng = seededRandom(seed);
+  const map = [];
+  for (let r = 0; r < MAP_ROWS; r++) {
+    map[r] = [];
+    for (let c = 0; c < MAP_COLS; c++) {
+      if (r === 0 || r === MAP_ROWS - 1 || c === 0 || c === MAP_COLS - 1) map[r][c] = 1;
+      else if (rng() < 0.055 && r > 2 && c > 2 && r < MAP_ROWS - 3 && c < MAP_COLS - 3) map[r][c] = 2;
+      else if (rng() < 0.015 && r > 2 && c > 2) map[r][c] = 3;
+      else map[r][c] = 0;
+    }
+  }
+  for (let r = MAP_ROWS / 2 - 3 | 0; r < MAP_ROWS / 2 + 3; r++)
+    for (let c = MAP_COLS / 2 - 3 | 0; c < MAP_COLS / 2 + 3; c++)
+      map[r][c] = 0;
+  return map;
+}
+
+let MAP = [], mapSeed = 0;
+
+// ─── DOM ───
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const chatInput = document.getElementById('chat-input');
+const nameInput = document.getElementById('name-input');
+const lobbyOverlay = document.getElementById('lobby-overlay');
+const lobbyName = document.getElementById('lobby-name');
+const lobbyRoom = document.getElementById('lobby-room');
+const lobbyStatus = document.getElementById('lobby-status');
+const joinBtn = document.getElementById('join-btn');
+const micBtn = document.getElementById('mic-btn');
+const audioContainer = document.getElementById('audio-container');
+
+// ─── State ───
+let myId = null, peer = null, roomCode = '', isHost = false;
+const connections = {};
+
+const myPlayer = {
+  x: MAP_W / 2, y: MAP_H / 2,
+  dir: 0, frame: 0, walking: false,
+  color: COLORS[Math.floor(Math.random() * COLORS.length)],
+  name: '', chat: '', chatTime: 0,
+  hp: MAX_HP, ghostUntil: 0,
+  attacking: false, attackTime: 0,
+};
+
+const remotePlayers = {};
+const keys = {};
+let camX = 0, camY = 0, animTick = 0, gameStarted = false;
+
+// ─── Voice State ───
+let micEnabled = false;
+let localStream = null;
+const mediaCalls = {};
+const remoteAudios = {};
+
+// ─── Attack visual effects ───
+const attackEffects = [];
+
+// ─── Resize ───
+function resize() { canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight; }
+window.addEventListener('resize', resize);
+resize();
+
+// ─── Room Code ───
+function genRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function copyRoomCode() {
+  navigator.clipboard.writeText(roomCode).catch(() => {});
+  const hint = document.getElementById('copy-hint');
+  hint.classList.add('show');
+  setTimeout(() => hint.classList.remove('show'), 1500);
+}
+
+// ─── Lobby ───
+lobbyName.value = 'Player' + Math.floor(Math.random() * 999);
+lobbyRoom.addEventListener('input', () => {
+  lobbyRoom.value = lobbyRoom.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  joinBtn.disabled = lobbyRoom.value.length < 4;
+});
+
+function setLobbyStatus(msg, isError) {
+  lobbyStatus.textContent = msg;
+  lobbyStatus.style.color = isError ? '#e94560' : '#53d769';
+}
+
+function createRoom() {
+  roomCode = genRoomCode();
+  mapSeed = Math.floor(Math.random() * 2147483646) + 1;
+  MAP = generateMap(mapSeed);
+  isHost = true;
+  myPlayer.name = lobbyName.value.trim() || 'Player';
+  nameInput.value = myPlayer.name;
+  setLobbyStatus('Creating room...');
+  initPeer(PEER_PREFIX + roomCode);
+}
+
+function joinRoom() {
+  const code = lobbyRoom.value.trim().toUpperCase();
+  if (code.length < 4) return;
+  roomCode = code;
+  isHost = false;
+  myPlayer.name = lobbyName.value.trim() || 'Player';
+  nameInput.value = myPlayer.name;
+  setLobbyStatus('Connecting to room...');
+  initPeer(null, PEER_PREFIX + roomCode);
+}
+
+function startGame() {
+  gameStarted = true;
+  lobbyOverlay.classList.add('hidden');
+  document.getElementById('room-code').textContent = roomCode;
+  updatePlayerList();
+  updateOnlineCount();
+  notify(isHost ? 'Room created! Share code: ' + roomCode : 'Joined room ' + roomCode);
+}
+
+// ─── Voice Chat ───
+let silentStream = null;
+
+function getSilentStream() {
+  if (silentStream) return silentStream;
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === 'suspended') ac.resume();
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  gain.gain.value = 0;
+  osc.connect(gain);
+  const dest = ac.createMediaStreamDestination();
+  gain.connect(dest);
+  osc.start();
+  silentStream = dest.stream;
+  return silentStream;
+}
+
+async function toggleMic() {
+  if (micEnabled) {
+    micEnabled = false;
+    micBtn.classList.remove('active');
+    if (localStream) {
+      localStream.getTracks().forEach(t => t.stop());
+      localStream = null;
+    }
+    for (const [pid, call] of Object.entries(mediaCalls)) {
+      call.close();
+      delete mediaCalls[pid];
+    }
+    broadcast({ type: 'voice_state', speaking: false });
+    notify('Mic off');
+  } else {
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      micEnabled = true;
+      micBtn.classList.add('active');
+      broadcast({ type: 'voice_state', speaking: true });
+      for (const pid of Object.keys(connections)) {
+        callPeer(pid);
+      }
+      notify('Mic on — others will hear you');
+    } catch (e) {
+      notify('Microphone access denied');
+      console.error('Mic error:', e);
+    }
+  }
+  updatePlayerList();
+}
+
+function callPeer(pid) {
+  if (!localStream || !peer || mediaCalls[pid]) return;
+  try {
+    const call = peer.call(pid, localStream);
+    if (!call) return;
+    mediaCalls[pid] = call;
+    call.on('stream', stream => playRemoteAudio(pid, stream));
+    call.on('close', () => { delete mediaCalls[pid]; removeRemoteAudio(pid); });
+    call.on('error', err => console.error('Call error to', pid, err));
+  } catch (e) {
+    console.error('Failed to call peer', pid, e);
+  }
+}
+
+function handleIncomingCall(call) {
+  const pid = call.peer;
+  if (mediaCalls[pid]) { mediaCalls[pid].close(); delete mediaCalls[pid]; }
+  const answerStream = localStream || getSilentStream();
+  call.answer(answerStream);
+  mediaCalls[pid] = call;
+  call.on('stream', stream => playRemoteAudio(pid, stream));
+  call.on('close', () => { delete mediaCalls[pid]; removeRemoteAudio(pid); });
+  call.on('error', err => console.error('Incoming call error from', pid, err));
+}
+
+function playRemoteAudio(pid, stream) {
+  removeRemoteAudio(pid);
+  const audio = document.createElement('audio');
+  audio.srcObject = stream;
+  audio.autoplay = true;
+  audio.playsInline = true;
+  audio.volume = 1.0;
+  audio.id = 'audio-' + pid;
+  audioContainer.appendChild(audio);
+  remoteAudios[pid] = audio;
+  const playPromise = audio.play();
+  if (playPromise) {
+    playPromise.catch(err => {
+      console.warn('Audio autoplay blocked for', pid, '- retrying on next click');
+      const resumeOnClick = () => {
+        audio.play().catch(() => {});
+        document.removeEventListener('click', resumeOnClick);
+      };
+      document.addEventListener('click', resumeOnClick);
+    });
+  }
+}
+
+function removeRemoteAudio(pid) {
+  if (remoteAudios[pid]) {
+    remoteAudios[pid].pause();
+    remoteAudios[pid].srcObject = null;
+    remoteAudios[pid].remove();
+    delete remoteAudios[pid];
+  }
+}
+
+// ─── PeerJS ───
+function initPeer(customId, hostPeerId) {
+  peer = customId ? new Peer(customId, { debug: 0 }) : new Peer({ debug: 0 });
+
+  peer.on('open', id => {
+    myId = id;
+    document.getElementById('status').textContent = '● Online';
+    document.getElementById('status').style.color = '#53d769';
+
+    if (hostPeerId) {
+      const conn = peer.connect(hostPeerId, { reliable: true });
+      conn.on('open', () => {
+        connections[hostPeerId] = conn;
+        conn.send({ type: 'join', player: getMyState() });
+      });
+      conn.on('data', data => handleData(hostPeerId, data));
+      conn.on('close', () => handleDisconnect(hostPeerId));
+      conn.on('error', () => setLobbyStatus('Connection failed', true));
+    } else {
+      startGame();
+    }
+  });
+
+  peer.on('connection', conn => {
+    const pid = conn.peer;
+    conn.on('open', () => {
+      connections[pid] = conn;
+      conn.send({
+        type: 'welcome', mapSeed,
+        hostPlayer: getMyState(),
+        players: getRemotePlayerStates(),
+        peers: Object.keys(connections).filter(id => id !== pid),
+      });
+      updateOnlineCount();
+      updatePlayerList();
+    });
+    conn.on('data', data => handleData(pid, data));
+    conn.on('close', () => handleDisconnect(pid));
+  });
+
+  peer.on('call', call => handleIncomingCall(call));
+
+  peer.on('error', err => {
+    console.error('Peer error:', err);
+    if (!gameStarted) {
+      if (err.type === 'unavailable-id') setLobbyStatus('Room code already in use, try again', true);
+      else if (err.type === 'peer-unavailable') setLobbyStatus('Room not found. Check the code.', true);
+      else setLobbyStatus('Connection error: ' + err.type, true);
+    }
+    document.getElementById('status').textContent = '● Error';
+    document.getElementById('status').style.color = '#e94560';
+  });
+}
+
+function handleDisconnect(pid) {
+  const name = remotePlayers[pid]?.name || 'Someone';
+  delete connections[pid];
+  delete remotePlayers[pid];
+  if (mediaCalls[pid]) { mediaCalls[pid].close(); delete mediaCalls[pid]; }
+  removeRemoteAudio(pid);
+  updateOnlineCount();
+  updatePlayerList();
+  if (gameStarted) notify(name + ' left');
+}
+
+function handleData(fromId, data) {
+  switch (data.type) {
+    case 'welcome': {
+      mapSeed = data.mapSeed;
+      MAP = generateMap(mapSeed);
+      if (data.hostPlayer) {
+        remotePlayers[fromId] = makeRemote(data.hostPlayer);
+      }
+      if (data.players) {
+        for (const [pid, ps] of Object.entries(data.players))
+          remotePlayers[pid] = makeRemote(ps);
+      }
+      if (data.peers) data.peers.forEach(pid => { if (pid !== myId && !connections[pid]) connectToPeer(pid); });
+      startGame();
+      break;
+    }
+    case 'join': {
+      if (data.player) {
+        remotePlayers[fromId] = makeRemote(data.player);
+        notify(data.player.name + ' joined!');
+        updatePlayerList();
+        broadcast({ type: 'player_joined', peerId: fromId, player: data.player }, fromId);
+        if (micEnabled) setTimeout(() => callPeer(fromId), 500);
+      }
+      break;
+    }
+    case 'player_joined': {
+      if (data.player && data.peerId !== myId) {
+        remotePlayers[data.peerId] = makeRemote(data.player);
+        if (!connections[data.peerId]) connectToPeer(data.peerId);
+        updatePlayerList();
+      }
+      break;
+    }
+    case 'hello': {
+      if (data.player) {
+        remotePlayers[fromId] = makeRemote(data.player);
+        if (connections[fromId]) connections[fromId].send({ type: 'hello_ack', player: getMyState() });
+        updatePlayerList();
+        if (micEnabled) setTimeout(() => callPeer(fromId), 500);
+      }
+      break;
+    }
+    case 'hello_ack': {
+      if (data.player) {
+        remotePlayers[fromId] = makeRemote(data.player);
+        updatePlayerList();
+      }
+      break;
+    }
+    case 'move': {
+      if (!remotePlayers[fromId]) remotePlayers[fromId] = makeRemote(data.player);
+      const rp = remotePlayers[fromId];
+      rp.targetX = data.player.x; rp.targetY = data.player.y;
+      rp.dir = data.player.dir; rp.walking = data.player.walking;
+      rp.color = data.player.color; rp.name = data.player.name;
+      break;
+    }
+    case 'chat': {
+      if (remotePlayers[fromId]) {
+        remotePlayers[fromId].chat = data.text;
+        remotePlayers[fromId].chatTime = Date.now();
+      }
+      break;
+    }
+    case 'attack': {
+      if (remotePlayers[fromId]) {
+        remotePlayers[fromId].attacking = true;
+        remotePlayers[fromId].attackTime = Date.now();
+        addAttackEffect(data.x, data.y, data.dir);
+      }
+      break;
+    }
+    case 'hit': {
+      myPlayer.hp = Math.max(0, myPlayer.hp - 1);
+      addDamageFlash();
+      if (myPlayer.hp <= 0) {
+        myPlayer.ghostUntil = Date.now() + GHOST_DURATION;
+        myPlayer.hp = 0;
+        setTimeout(() => {
+          myPlayer.hp = MAX_HP;
+          myPlayer.x = MAP_W / 2 + (Math.random() - 0.5) * 200;
+          myPlayer.y = MAP_H / 2 + (Math.random() - 0.5) * 200;
+          broadcast({ type: 'move', player: getMyState() });
+          broadcast({ type: 'hp_update', hp: myPlayer.hp });
+        }, GHOST_DURATION);
+      }
+      broadcast({ type: 'hp_update', hp: myPlayer.hp, ghostUntil: myPlayer.ghostUntil });
+      break;
+    }
+    case 'hp_update': {
+      if (remotePlayers[fromId]) {
+        remotePlayers[fromId].hp = data.hp;
+        if (data.ghostUntil) remotePlayers[fromId].ghostUntil = data.ghostUntil;
+      }
+      updatePlayerList();
+      break;
+    }
+    case 'voice_state': {
+      if (remotePlayers[fromId]) remotePlayers[fromId].voiceOn = data.speaking;
+      updatePlayerList();
+      break;
+    }
+    case 'player_left': {
+      if (data.peerId && remotePlayers[data.peerId]) {
+        const n = remotePlayers[data.peerId].name || 'Someone';
+        delete remotePlayers[data.peerId];
+        notify(n + ' left');
+        updatePlayerList();
+      }
+      break;
+    }
+  }
+}
+
+function makeRemote(p) {
+  return { ...p, targetX: p.x, targetY: p.y, hp: p.hp ?? MAX_HP, ghostUntil: p.ghostUntil ?? 0, voiceOn: false };
+}
+
+function connectToPeer(targetId) {
+  if (!targetId || targetId === myId || connections[targetId]) return;
+  const conn = peer.connect(targetId, { reliable: true });
+  conn.on('open', () => {
+    connections[targetId] = conn;
+    conn.send({ type: 'hello', player: getMyState() });
+    updateOnlineCount();
+    if (micEnabled) setTimeout(() => callPeer(targetId), 500);
+  });
+  conn.on('data', data => handleData(targetId, data));
+  conn.on('close', () => handleDisconnect(targetId));
+}
+
+function getMyState() {
+  return {
+    x: myPlayer.x, y: myPlayer.y,
+    dir: myPlayer.dir, frame: myPlayer.frame,
+    walking: myPlayer.walking, color: myPlayer.color,
+    name: nameInput.value || 'Player',
+    hp: myPlayer.hp, ghostUntil: myPlayer.ghostUntil,
+  };
+}
+
+function getRemotePlayerStates() {
+  const out = {};
+  for (const [pid, p] of Object.entries(remotePlayers))
+    out[pid] = { x: p.x, y: p.y, dir: p.dir, color: p.color, name: p.name, walking: p.walking, hp: p.hp, ghostUntil: p.ghostUntil };
+  return out;
+}
+
+function broadcast(data, excludeId) {
+  for (const [id, conn] of Object.entries(connections))
+    if (id !== excludeId && conn.open) conn.send(data);
+}
+
+function updateOnlineCount() {
+  document.getElementById('online-count').textContent = `${Object.keys(connections).length + 1} online`;
+}
+
+function notify(text) {
+  const el = document.createElement('div');
+  el.className = 'notif'; el.textContent = text;
+  document.getElementById('notifications').appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+function updatePlayerList() {
+  const c = document.getElementById('pl-entries');
+  const hpBar = hp => '❤️'.repeat(hp) + '🖤'.repeat(MAX_HP - hp);
+  let html = `<div class="pl-entry">
+    <span class="pl-dot" style="background:${myPlayer.color}"></span>
+    ${nameInput.value || 'Player'} (you)
+    ${micEnabled ? '<span class="pl-mic">🔊</span>' : ''}
+    <span class="pl-hp">${hpBar(myPlayer.hp)}</span>
+  </div>`;
+  for (const rp of Object.values(remotePlayers)) {
+    html += `<div class="pl-entry">
+      <span class="pl-dot" style="background:${rp.color || '#888'}"></span>
+      ${rp.name || 'Player'}
+      ${rp.voiceOn ? '<span class="pl-mic">🔊</span>' : ''}
+      <span class="pl-hp">${hpBar(rp.hp ?? MAX_HP)}</span>
+    </div>`;
+  }
+  c.innerHTML = html;
+}
+
+// ─── Attack ───
+let lastAttackTime = 0;
+let damageFlashUntil = 0;
+
+function performAttack() {
+  const now = Date.now();
+  if (now - lastAttackTime < ATTACK_COOLDOWN) return;
+  if (isGhost(myPlayer)) return;
+  lastAttackTime = now;
+  myPlayer.attacking = true;
+  myPlayer.attackTime = now;
+
+  const ax = myPlayer.x, ay = myPlayer.y, dir = myPlayer.dir;
+  addAttackEffect(ax, ay, dir);
+  broadcast({ type: 'attack', x: ax, y: ay, dir });
+
+  const hitBox = getAttackBox(ax, ay, dir);
+  for (const [pid, rp] of Object.entries(remotePlayers)) {
+    if (isGhost(rp)) continue;
+    if (rp.x > hitBox.x1 && rp.x < hitBox.x2 && rp.y > hitBox.y1 && rp.y < hitBox.y2) {
+      if (connections[pid]?.open) connections[pid].send({ type: 'hit' });
+    }
+  }
+}
+
+function getAttackBox(x, y, dir) {
+  const r = ATTACK_RANGE, w = ATTACK_WIDTH;
+  if (dir === 0) return { x1: x - w, y1: y + 5, x2: x + w, y2: y + 5 + r };
+  if (dir === 1) return { x1: x - 5 - r, y1: y - w, x2: x - 5, y2: y + w };
+  if (dir === 2) return { x1: x + 5, y1: y - w, x2: x + 5 + r, y2: y + w };
+  return { x1: x - w, y1: y - 5 - r, x2: x + w, y2: y - 5 };
+}
+
+function addAttackEffect(x, y, dir) {
+  attackEffects.push({ x, y, dir, time: Date.now() });
+}
+
+function addDamageFlash() {
+  damageFlashUntil = Date.now() + 200;
+}
+
+function isGhost(p) {
+  return p.ghostUntil && Date.now() < p.ghostUntil;
+}
+
+// ─── Input ───
+let chatFocused = false;
+chatInput.addEventListener('focus', () => { chatFocused = true; });
+chatInput.addEventListener('blur', () => { chatFocused = false; });
+
+chatInput.addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter') {
+    const text = chatInput.value.trim();
+    if (text) {
+      myPlayer.chat = text;
+      myPlayer.chatTime = Date.now();
+      broadcast({ type: 'chat', text });
+    }
+    chatInput.value = '';
+    chatInput.blur();
+    e.preventDefault();
+  } else if (e.key === 'Escape') {
+    chatInput.value = '';
+    chatInput.blur();
+  }
+});
+
+nameInput.addEventListener('keydown', e => e.stopPropagation());
+nameInput.addEventListener('change', () => updatePlayerList());
+
+document.addEventListener('keydown', e => {
+  if (chatFocused || !gameStarted) return;
+  if (e.key.startsWith('Arrow')) {
+    keys[e.key] = true;
+    e.preventDefault();
+    return;
+  }
+  if (e.key === '=') {
+    performAttack();
+    e.preventDefault();
+    return;
+  }
+  if (e.key === 'Escape') return;
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    chatInput.focus();
+    return;
+  }
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// ─── Collision ───
+function canMove(x, y) {
+  const pad = 10;
+  const corners = [[x-pad,y-pad],[x+pad,y-pad],[x-pad,y+pad],[x+pad,y+pad]];
+  for (const [cx, cy] of corners) {
+    const col = Math.floor(cx / TILE), row = Math.floor(cy / TILE);
+    if (row < 0 || row >= MAP_ROWS || col < 0 || col >= MAP_COLS) return false;
+    if (MAP[row]?.[col] !== 0) return false;
+  }
+  return true;
+}
+
+// ─── Update ───
+let lastBroadcast = 0;
+
+function update() {
+  if (!gameStarted) return;
+  if (chatFocused) { myPlayer.walking = false; return; }
+
+  let dx = 0, dy = 0;
+  if (keys['ArrowUp']) dy = -SPEED;
+  if (keys['ArrowDown']) dy = SPEED;
+  if (keys['ArrowLeft']) dx = -SPEED;
+  if (keys['ArrowRight']) dx = SPEED;
+  if (dx && dy) { dx *= 0.707; dy *= 0.707; }
+
+  myPlayer.walking = !!(dx || dy);
+
+  if (dx || dy) {
+    const nx = myPlayer.x + dx, ny = myPlayer.y + dy;
+    if (canMove(nx, myPlayer.y)) myPlayer.x = nx;
+    if (canMove(myPlayer.x, ny)) myPlayer.y = ny;
+    if (Math.abs(dx) > Math.abs(dy)) myPlayer.dir = dx < 0 ? 1 : 2;
+    else myPlayer.dir = dy < 0 ? 3 : 0;
+    animTick++;
+    if (animTick % 6 === 0) myPlayer.frame = (myPlayer.frame + 1) % 4;
+    const now = Date.now();
+    if (now - lastBroadcast > 33) {
+      broadcast({ type: 'move', player: getMyState() });
+      lastBroadcast = now;
+    }
+  }
+
+  for (const p of Object.values(remotePlayers)) {
+    if (p.targetX !== undefined) {
+      const ddx = p.targetX - p.x, ddy = p.targetY - p.y;
+      if (Math.sqrt(ddx*ddx + ddy*ddy) > 1) {
+        p.x += ddx * 0.2; p.y += ddy * 0.2;
+        p.walking = true;
+        p._animTick = (p._animTick || 0) + 1;
+        if (p._animTick % 6 === 0) p.frame = ((p.frame || 0) + 1) % 4;
+      } else {
+        p.x = p.targetX; p.y = p.targetY; p.walking = false;
+      }
+    }
+  }
+
+  // cleanup old attack effects
+  const now = Date.now();
+  while (attackEffects.length > 0 && now - attackEffects[0].time > 300) attackEffects.shift();
+}
+
+// ─── Drawing ───
+const grassPattern = [];
+for (let r = 0; r < MAP_ROWS; r++) {
+  grassPattern[r] = [];
+  for (let c = 0; c < MAP_COLS; c++) grassPattern[r][c] = Math.random() > 0.85;
+}
+
+function drawTile(col, row) {
+  const x = col * TILE, y = row * TILE;
+  const t = MAP[row]?.[col] ?? 0;
+  ctx.fillStyle = (col + row) % 2 === 0 ? '#4a7c59' : '#528a62';
+  ctx.fillRect(x, y, TILE, TILE);
+  if (grassPattern[row]?.[col]) {
+    ctx.fillStyle = '#5d9d6d';
+    ctx.fillRect(x + 10, y + 8, 2, 6);
+    ctx.fillRect(x + 20, y + 18, 2, 5);
+  }
+  if (t === 1) {
+    ctx.fillStyle = '#5c5c6e'; ctx.fillRect(x, y, TILE, TILE);
+    ctx.fillStyle = '#4a4a5c'; ctx.fillRect(x+2, y+2, TILE-4, TILE-4);
+    ctx.fillStyle = '#6e6e80'; ctx.fillRect(x+4, y+4, TILE-12, TILE-12);
+  } else if (t === 2) {
+    ctx.fillStyle = '#3e2723'; ctx.fillRect(x+13, y+18, 6, 14);
+    ctx.fillStyle = '#2e7d32'; ctx.beginPath(); ctx.arc(x+16, y+14, 11, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#43a047'; ctx.beginPath(); ctx.arc(x+13, y+10, 7, 0, Math.PI*2); ctx.fill();
+  } else if (t === 3) {
+    ctx.fillStyle = '#78909c'; ctx.beginPath(); ctx.ellipse(x+16, y+20, 11, 8, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#90a4ae'; ctx.beginPath(); ctx.ellipse(x+14, y+18, 7, 5, -0.3, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+function drawHpBar(x, y, hp) {
+  const totalW = 32, h = 4, gap = 1;
+  const blockW = (totalW - gap * (MAX_HP - 1)) / MAX_HP;
+  const startX = x - totalW / 2;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(startX - 1, y - 1, totalW + 2, h + 2);
+
+  for (let i = 0; i < MAX_HP; i++) {
+    const bx = startX + i * (blockW + gap);
+    if (i < hp) {
+      ctx.fillStyle = hp > 2 ? '#53d769' : hp > 1 ? '#f0ad4e' : '#e94560';
+    } else {
+      ctx.fillStyle = '#333';
+    }
+    ctx.fillRect(bx, y, blockW, h);
+  }
+}
+
+function drawCharacter(p, isMe) {
+  const x = Math.round(p.x), y = Math.round(p.y);
+  const color = p.color || '#e94560';
+  const name = p.name || 'Player';
+  const frame = p.frame || 0;
+  const walking = p.walking;
+  const ghost = isGhost(p);
+
+  ctx.save();
+  if (ghost) {
+    const blink = Math.sin(Date.now() / 100) * 0.15 + 0.3;
+    ctx.globalAlpha = blink;
+  }
+
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath(); ctx.ellipse(x, y+15, 10, 4, 0, 0, Math.PI*2); ctx.fill();
+
+  // legs
+  ctx.fillStyle = '#2c3e50';
+  if (walking) {
+    const ls = Math.sin(frame * Math.PI / 2) * 4;
+    ctx.fillRect(x-6, y+8+ls, 5, 8); ctx.fillRect(x+1, y+8-ls, 5, 8);
+  } else {
+    ctx.fillRect(x-6, y+8, 5, 8); ctx.fillRect(x+1, y+8, 5, 8);
+  }
+
+  // body
+  ctx.fillStyle = color;
+  ctx.fillRect(x-8, y-12, 16, 21);
+
+  // arms
+  if (walking) {
+    const as = Math.sin(frame * Math.PI / 2) * 3;
+    ctx.fillRect(x-11, y-8+as, 4, 14); ctx.fillRect(x+7, y-8-as, 4, 14);
+  } else {
+    ctx.fillRect(x-11, y-8, 4, 14); ctx.fillRect(x+7, y-8, 4, 14);
+  }
+
+  // head
+  ctx.fillStyle = '#ffcc99';
+  ctx.fillRect(x-6, y-22, 12, 11);
+  ctx.fillStyle = '#4a3728';
+  ctx.fillRect(x-7, y-24, 14, 4);
+
+  // eyes
+  ctx.fillStyle = '#333';
+  if (p.dir === 0) { ctx.fillRect(x-4, y-17, 2, 3); ctx.fillRect(x+2, y-17, 2, 3); }
+  else if (p.dir === 1) { ctx.fillRect(x-5, y-17, 2, 3); }
+  else if (p.dir === 2) { ctx.fillRect(x+3, y-17, 2, 3); }
+
+  ctx.restore();
+
+  // HP bar (always fully opaque)
+  const hp = p.hp ?? MAX_HP;
+  drawHpBar(x, y - 38, hp);
+
+  // name tag
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  const tw = ctx.measureText(name).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(x - tw/2 - 3, y - 52, tw + 6, 14);
+  ctx.fillStyle = isMe ? '#f0ad4e' : '#fff';
+  ctx.fillText(name, x, y - 41);
+
+  // voice indicator
+  if ((isMe && micEnabled) || (!isMe && p.voiceOn)) {
+    ctx.fillStyle = '#53d769';
+    ctx.font = '10px sans-serif';
+    ctx.fillText('🔊', x + tw/2 + 10, y - 41);
+  }
+
+  // chat bubble
+  if (p.chat && Date.now() - p.chatTime < CHAT_DURATION) {
+    const remaining = 1 - (Date.now() - p.chatTime) / CHAT_DURATION;
+    drawChatBubble(x, y - 58, p.chat, Math.min(1, remaining * 3));
+  }
+}
+
+function drawChatBubble(x, y, text, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = '13px sans-serif';
+  const tw = ctx.measureText(text).width;
+  const pw = tw + 18, ph = 24;
+  const bx = x - pw/2, by = y - ph - 8;
+
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  const r = 8;
+  ctx.moveTo(bx+r, by); ctx.lineTo(bx+pw-r, by);
+  ctx.quadraticCurveTo(bx+pw, by, bx+pw, by+r);
+  ctx.lineTo(bx+pw, by+ph-r); ctx.quadraticCurveTo(bx+pw, by+ph, bx+pw-r, by+ph);
+  ctx.lineTo(bx+r, by+ph); ctx.quadraticCurveTo(bx, by+ph, bx, by+ph-r);
+  ctx.lineTo(bx, by+r); ctx.quadraticCurveTo(bx, by, bx+r, by);
+  ctx.closePath(); ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(x-5, by+ph); ctx.lineTo(x, by+ph+7); ctx.lineTo(x+5, by+ph); ctx.fill();
+
+  ctx.fillStyle = '#222'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, by + ph/2);
+  ctx.restore();
+}
+
+function drawAttackEffects() {
+  const now = Date.now();
+  for (const ef of attackEffects) {
+    const t = (now - ef.time) / 300;
+    if (t > 1) continue;
+    const alpha = 1 - t;
+    const scale = 0.5 + t * 0.5;
+    ctx.save();
+    ctx.translate(ef.x, ef.y);
+    ctx.globalAlpha = alpha * 0.7;
+
+    let ox = 0, oy = 0, angle = 0;
+    if (ef.dir === 0) { oy = 20; angle = 0; }
+    else if (ef.dir === 1) { ox = -20; angle = -Math.PI/2; }
+    else if (ef.dir === 2) { ox = 20; angle = Math.PI/2; }
+    else { oy = -20; angle = Math.PI; }
+
+    ctx.translate(ox, oy);
+    ctx.rotate(angle);
+    ctx.scale(scale, scale);
+
+    // slash arc
+    ctx.strokeStyle = '#ffe082';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, 20, -Math.PI * 0.6, Math.PI * 0.6);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 14, -Math.PI * 0.4, Math.PI * 0.4);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+function draw() {
+  if (!gameStarted) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  camX = myPlayer.x - canvas.width/2;
+  camY = myPlayer.y - canvas.height/2;
+  camX = Math.max(0, Math.min(MAP_W - canvas.width, camX));
+  camY = Math.max(0, Math.min(MAP_H - canvas.height, camY));
+
+  ctx.save();
+  ctx.translate(-Math.round(camX), -Math.round(camY));
+
+  const sc = Math.max(0, Math.floor(camX/TILE));
+  const ec = Math.min(MAP_COLS, Math.ceil((camX+canvas.width)/TILE)+1);
+  const sr = Math.max(0, Math.floor(camY/TILE));
+  const er = Math.min(MAP_ROWS, Math.ceil((camY+canvas.height)/TILE)+1);
+
+  for (let r = sr; r < er; r++)
+    for (let c = sc; c < ec; c++)
+      drawTile(c, r);
+
+  const allPlayers = [{ ...myPlayer, name: nameInput.value || 'Player', _isMe: true }];
+  for (const rp of Object.values(remotePlayers)) allPlayers.push({ ...rp, _isMe: false });
+  allPlayers.sort((a, b) => a.y - b.y);
+  for (const p of allPlayers) drawCharacter(p, p._isMe);
+
+  drawAttackEffects();
+
+  ctx.restore();
+
+  // damage flash
+  if (Date.now() < damageFlashUntil) {
+    ctx.fillStyle = 'rgba(233, 69, 96, 0.25)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  drawMinimap();
+}
+
+function drawMinimap() {
+  const mw = 150, mh = mw * (MAP_ROWS/MAP_COLS);
+  const mx = canvas.width-mw-12, my = 12;
+  const sx = mw/MAP_W, sy = mh/MAP_H;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(mx-2, my-2, mw+4, mh+4);
+
+  for (let r = 0; r < MAP_ROWS; r++)
+    for (let c = 0; c < MAP_COLS; c++) {
+      const t = MAP[r][c];
+      ctx.fillStyle = t===0?'#4a7c59':t===1?'#5c5c6e':t===2?'#2e7d32':'#78909c';
+      ctx.fillRect(mx+c*(mw/MAP_COLS), my+r*(mh/MAP_ROWS), mw/MAP_COLS+.5, mh/MAP_ROWS+.5);
+    }
+
+  ctx.fillStyle = '#f0ad4e';
+  ctx.beginPath(); ctx.arc(mx+myPlayer.x*sx, my+myPlayer.y*sy, 3, 0, Math.PI*2); ctx.fill();
+
+  for (const rp of Object.values(remotePlayers)) {
+    ctx.fillStyle = rp.color || '#5bc0de';
+    ctx.beginPath(); ctx.arc(mx+rp.x*sx, my+rp.y*sy, 2.5, 0, Math.PI*2); ctx.fill();
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1;
+  ctx.strokeRect(mx+camX*sx, my+camY*sy, canvas.width*sx, canvas.height*sy);
+}
+
+// ─── Game Loop ───
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+updateOnlineCount();
+loop();
+</script>
+</body>
+</html>
