@@ -2,23 +2,37 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Pixel World</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { height: 100%; overflow: hidden; }
   body {
     background: #1a1a2e;
     font-family: 'Segoe UI', system-ui, sans-serif;
     color: #e0e0e0;
-    overflow: hidden; height: 100vh;
+    overflow: hidden;
+    height: 100vh;
+    height: 100dvh;
     display: flex; flex-direction: column;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   #top-bar {
     display: flex; align-items: center; gap: 10px;
     padding: 8px 16px; background: #16213e;
     border-bottom: 2px solid #0f3460; z-index: 10; flex-shrink: 0;
+  }
+  @media (max-width: 768px) {
+    #top-bar {
+      padding: 4px 8px; gap: 6px;
+      flex-wrap: wrap;
+    }
+    #top-bar input { font-size: 12px; padding: 3px 6px; }
+    .bar-label { font-size: 11px; }
+    .separator { height: 14px; }
   }
   .bar-label { font-size: 13px; color: #8899aa; }
   .separator { width: 1px; height: 20px; background: #0f3460; }
@@ -39,7 +53,8 @@
   #lobby-overlay.hidden { display: none; }
   #lobby {
     background: #16213e; border: 2px solid #0f3460; border-radius: 16px;
-    padding: 36px 40px; width: 400px; text-align: center;
+    padding: 36px 40px; width: 400px; max-width: 92vw; text-align: center;
+    max-height: 90vh; max-height: 90dvh; overflow-y: auto;
   }
   #lobby h1 { font-size: 28px; margin-bottom: 6px; color: #fff; }
   #lobby p { font-size: 13px; color: #8899aa; margin-bottom: 24px; }
@@ -179,29 +194,36 @@
   /* ─── Mobile Controls ─── */
   #mobile-controls {
     display: none;
-    position: absolute; bottom: 14px; left: 0; right: 0;
+    position: absolute; bottom: 0; left: 0; right: 0;
     z-index: 30; pointer-events: none;
-    padding: 0 16px;
+    padding: 10px 12px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
     justify-content: space-between; align-items: flex-end;
   }
   @media (pointer: coarse), (max-width: 768px) {
     #mobile-controls { display: flex; }
     #help-hint { display: none; }
-    #chat-bar { bottom: 140px; }
+    #chat-bar { bottom: 180px; }
+    #chat-input { width: 260px; font-size: 13px; padding: 8px 12px; }
+    #player-list { top: 4px; left: 4px; padding: 6px 8px; min-width: 100px; }
+    #player-list h3 { font-size: 10px; margin-bottom: 3px; }
+    .pl-entry { font-size: 11px; gap: 4px; }
+    .pl-dot { width: 6px; height: 6px; }
   }
   .dpad {
     pointer-events: auto;
+    --btn-size: min(13vw, 52px);
     display: grid;
-    grid-template-columns: 52px 52px 52px;
-    grid-template-rows: 52px 52px 52px;
-    gap: 4px;
+    grid-template-columns: var(--btn-size) var(--btn-size) var(--btn-size);
+    grid-template-rows: var(--btn-size) var(--btn-size) var(--btn-size);
+    gap: 3px;
   }
   .dpad-btn {
-    width: 52px; height: 52px; border-radius: 12px;
-    border: 2px solid rgba(255,255,255,0.15);
-    background: rgba(22,33,62,0.75);
+    width: var(--btn-size); height: var(--btn-size); border-radius: 12px;
+    border: 2px solid rgba(255,255,255,0.18);
+    background: rgba(22,33,62,0.8);
     backdrop-filter: blur(6px);
-    color: #ccc; font-size: 22px;
+    color: #ccc; font-size: min(5.5vw, 22px);
     display: flex; align-items: center; justify-content: center;
     user-select: none; -webkit-user-select: none;
     touch-action: manipulation;
@@ -214,7 +236,7 @@
     transform: scale(0.93);
   }
   .dpad-center {
-    width: 52px; height: 52px;
+    width: var(--btn-size); height: var(--btn-size);
     border-radius: 12px; background: transparent; border: none;
   }
   .action-btns {
@@ -225,9 +247,10 @@
     align-items: center;
   }
   .action-btn {
-    width: 62px; height: 62px; border-radius: 50%;
-    border: 2px solid rgba(255,255,255,0.15);
-    background: rgba(22,33,62,0.75);
+    --act-size: min(16vw, 62px);
+    width: var(--act-size); height: var(--act-size); border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.18);
+    background: rgba(22,33,62,0.8);
     backdrop-filter: blur(6px);
     color: #fff; font-size: 14px; font-weight: 700;
     display: flex; align-items: center; justify-content: center;
@@ -235,10 +258,10 @@
     touch-action: manipulation;
     cursor: pointer;
     transition: background .1s, transform .1s;
-    flex-direction: column; gap: 2px;
+    flex-direction: column; gap: 1px;
   }
-  .action-btn .act-icon { font-size: 22px; line-height: 1; }
-  .action-btn .act-label { font-size: 10px; opacity: 0.7; line-height: 1; }
+  .action-btn .act-icon { font-size: min(5.5vw, 22px); line-height: 1; }
+  .action-btn .act-label { font-size: min(2.5vw, 10px); opacity: 0.7; line-height: 1; }
   .action-btn:active, .action-btn.pressed {
     background: rgba(233,69,96,0.5);
     border-color: #e94560;
@@ -246,7 +269,7 @@
   }
   .action-btn.btn-atk { border-color: rgba(233,69,96,0.4); }
   .action-btn.btn-chat { border-color: rgba(83,215,105,0.4); }
-  .action-row { display: flex; gap: 12px; }
+  .action-row { display: flex; gap: min(3vw, 12px); }
 </style>
 </head>
 <body>
@@ -619,8 +642,13 @@ function loadRemoteAvatar(pid, dataUrl) {
   remoteAvatarImgs[pid] = img;
 }
 
-function resize() { canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight; }
+function resize() {
+  document.body.style.height = window.innerHeight + 'px';
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+}
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 150));
 resize();
 
 // ─── Room Code ───
