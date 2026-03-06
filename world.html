@@ -369,6 +369,30 @@ function generateMap(seed) {
 }
 
 let MAP = [], mapSeed = 0;
+const NUM_CARS = 4;
+let cars = []; // { id, x, y, dir, driverPid: null }
+
+function generateCars(seed) {
+  const rng = seededRandom(seed + 777);
+  const result = [];
+  for (let i = 0; i < NUM_CARS; i++) {
+    let cx, cy, attempts = 0;
+    do {
+      cx = 4 + Math.floor(rng() * (MAP_COLS - 8));
+      cy = 4 + Math.floor(rng() * (MAP_ROWS - 8));
+      attempts++;
+    } while (!WALKABLE.has(MAP[cy]?.[cx]) && attempts < 200);
+    result.push({
+      id: i,
+      x: cx * TILE + TILE / 2,
+      y: cy * TILE + TILE / 2,
+      dir: Math.floor(rng() * 4),
+      driverPid: null,
+      color: ['#e74c3c','#3498db','#f1c40f','#2ecc71'][i],
+    });
+  }
+  return result;
+}
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -385,6 +409,9 @@ const audioContainer = document.getElementById('audio-container');
 let myId = null, peer = null, roomCode = '', isHost = false;
 const connections = {};
 
+const CAR_INTERACT_RANGE = 50;
+const CAR_SPEED = SPEED * 2;
+
 const myPlayer = {
   x: MAP_W/2, y: MAP_H/2,
   dir: 0, frame: 0, walking: false,
@@ -392,6 +419,7 @@ const myPlayer = {
   name: '', chat: '', chatTime: 0,
   emote: '', emoteTime: 0,
   hp: MAX_HP, ghostUntil: 0,
+  carId: -1,
 };
 
 const remotePlayers = {};
@@ -473,6 +501,7 @@ function createRoom() {
   roomCode = genRoomCode();
   mapSeed = Math.floor(Math.random() * 2147483646) + 1;
   MAP = generateMap(mapSeed);
+  cars = generateCars(mapSeed);
   isHost = true;
   myPlayer.name = lobbyName.value.trim() || 'Player';
   nameInput.value = myPlayer.name;
@@ -619,7 +648,7 @@ function initPeer(customId, hostPeerId) {
     const pid = conn.peer;
     conn.on('open', () => {
       connections[pid] = conn;
-      conn.send({ type: 'welcome', mapSeed, hostPlayer: getMyState(), players: getRemotePlayerStates(), peers: Object.keys(connections).filter(i => i !== pid) });
+      conn.send({ type: 'welcome', mapSeed, hostPlayer: getMyState(), players: getRemotePlayerStates(), peers: Object.keys(connections).filter(i => i !== pid), cars: cars });
       updateOnlineCount(); updatePlayerList();
     });
     conn.on('data', data => handleData(pid, data));
@@ -644,6 +673,7 @@ function handleDisconnect(pid) {
   const name = remotePlayers[pid]?.name || 'Someone';
   delete connections[pid]; delete remotePlayers[pid];
   delete remoteAvatarImgs[pid];
+  for (const car of cars) if (car.driverPid === pid) car.driverPid = null;
   if (mediaCalls[pid]) { mediaCalls[pid].close(); delete mediaCalls[pid]; }
   removeRemoteAudio(pid);
   updateOnlineCount(); updatePlayerList();
@@ -654,6 +684,7 @@ function handleData(fromId, data) {
   switch (data.type) {
     case 'welcome':
       mapSeed = data.mapSeed; MAP = generateMap(mapSeed);
+      cars = data.cars || generateCars(mapSeed);
       if (data.hostPlayer) remotePlayers[fromId] = makeRemote(data.hostPlayer, fromId);
       if (data.players) for (const [pid, ps] of Object.entries(data.players)) remotePlayers[pid] = makeRemote(ps, pid);
       if (data.peers) data.peers.forEach(pid => { if (pid !== myId && !connections[pid]) connectToPeer(pid); });
@@ -734,9 +765,29 @@ function handleData(fromId, data) {
       if (remotePlayers[fromId]) remotePlayers[fromId].voiceOn = data.speaking;
       updatePlayerList();
       break;
+    case 'car_enter':
+      if (data.carId >= 0 && data.carId < cars.length) {
+        cars[data.carId].driverPid = fromId;
+        if (remotePlayers[fromId]) remotePlayers[fromId].carId = data.carId;
+      }
+      break;
+    case 'car_exit':
+      if (data.carId >= 0 && data.carId < cars.length) {
+        cars[data.carId].driverPid = null;
+        cars[data.carId].x = data.carX; cars[data.carId].y = data.carY; cars[data.carId].dir = data.carDir;
+        if (remotePlayers[fromId]) remotePlayers[fromId].carId = -1;
+      }
+      break;
+    case 'car_move':
+      if (data.carId >= 0 && data.carId < cars.length) {
+        cars[data.carId].x = data.x; cars[data.carId].y = data.y; cars[data.carId].dir = data.dir;
+      }
+      break;
     case 'player_left':
       if (data.peerId && remotePlayers[data.peerId]) {
         notify((remotePlayers[data.peerId].name||'Someone') + ' left');
+        // release any car they were driving
+        for (const car of cars) if (car.driverPid === data.peerId) car.driverPid = null;
         delete remotePlayers[data.peerId];
         updatePlayerList();
       }
@@ -765,7 +816,7 @@ function connectToPeer(tid) {
 function getMyState() {
   return { x: myPlayer.x, y: myPlayer.y, dir: myPlayer.dir, frame: myPlayer.frame,
     walking: myPlayer.walking, color: myPlayer.color, name: nameInput.value||'Player',
-    hp: myPlayer.hp, ghostUntil: myPlayer.ghostUntil, avatar: myAvatarDataUrl };
+    hp: myPlayer.hp, ghostUntil: myPlayer.ghostUntil, avatar: myAvatarDataUrl, carId: myPlayer.carId };
 }
 
 function getRemotePlayerStates() {
@@ -813,6 +864,26 @@ let lastAttackTime = 0, damageFlashUntil = 0;
 function performAttack() {
   const now = Date.now();
   if (now - lastAttackTime < ATTACK_COOLDOWN || isGhost(myPlayer)) return;
+
+  // if driving, exit the car
+  if (myPlayer.carId >= 0) {
+    exitCar();
+    lastAttackTime = now;
+    return;
+  }
+
+  // check if near a car to enter
+  for (const car of cars) {
+    if (car.driverPid) continue;
+    const cdx = myPlayer.x - car.x, cdy = myPlayer.y - car.y;
+    if (Math.sqrt(cdx*cdx + cdy*cdy) < CAR_INTERACT_RANGE) {
+      enterCar(car);
+      lastAttackTime = now;
+      return;
+    }
+  }
+
+  // normal attack
   lastAttackTime = now;
   myPlayer.attackTime = now;
   const ax = myPlayer.x, ay = myPlayer.y, dir = myPlayer.dir;
@@ -824,6 +895,29 @@ function performAttack() {
     if (rp.x > hb.x1 && rp.x < hb.x2 && rp.y > hb.y1 && rp.y < hb.y2)
       if (connections[pid]?.open) connections[pid].send({ type: 'hit' });
   }
+}
+
+function enterCar(car) {
+  myPlayer.carId = car.id;
+  car.driverPid = 'me';
+  myPlayer.x = car.x; myPlayer.y = car.y;
+  car.dir = myPlayer.dir;
+  broadcast({ type: 'car_enter', carId: car.id });
+  notify('🚗 Driving! Space to exit');
+}
+
+function exitCar() {
+  const car = cars[myPlayer.carId];
+  if (!car) return;
+  car.driverPid = null;
+  // place player next to car
+  const offsets = [[0,30],[0,-30],[30,0],[-30,0]];
+  for (const [ox, oy] of offsets) {
+    if (canMove(car.x + ox, car.y + oy)) { myPlayer.x = car.x + ox; myPlayer.y = car.y + oy; break; }
+  }
+  broadcast({ type: 'car_exit', carId: myPlayer.carId, carX: car.x, carY: car.y, carDir: car.dir });
+  myPlayer.carId = -1;
+  notify('Exited car');
 }
 
 function getAttackBox(x, y, dir) {
@@ -891,11 +985,13 @@ let lastBroadcast = 0;
 function update() {
   if (!gameStarted) return;
   if (chatFocused) { myPlayer.walking = false; return; }
+  const driving = myPlayer.carId >= 0;
+  const spd = driving ? CAR_SPEED : SPEED;
   let dx = 0, dy = 0;
-  if (keys['ArrowUp'] || keys['w']) dy = -SPEED;
-  if (keys['ArrowDown'] || keys['s']) dy = SPEED;
-  if (keys['ArrowLeft'] || keys['a']) dx = -SPEED;
-  if (keys['ArrowRight'] || keys['d']) dx = SPEED;
+  if (keys['ArrowUp'] || keys['w']) dy = -spd;
+  if (keys['ArrowDown'] || keys['s']) dy = spd;
+  if (keys['ArrowLeft'] || keys['a']) dx = -spd;
+  if (keys['ArrowRight'] || keys['d']) dx = spd;
   if (dx && dy) { dx *= 0.707; dy *= 0.707; }
   myPlayer.walking = !!(dx || dy);
   if (dx || dy) {
@@ -905,8 +1001,17 @@ function update() {
     else myPlayer.dir = dy<0?3:0;
     animTick++;
     if (animTick%6===0) myPlayer.frame = (myPlayer.frame+1)%4;
+    // sync car position
+    if (driving && cars[myPlayer.carId]) {
+      const car = cars[myPlayer.carId];
+      car.x = myPlayer.x; car.y = myPlayer.y; car.dir = myPlayer.dir;
+    }
     const now = Date.now();
-    if (now-lastBroadcast > 33) { broadcast({type:'move',player:getMyState()}); lastBroadcast = now; }
+    if (now-lastBroadcast > 33) {
+      broadcast({type:'move',player:getMyState()});
+      if (driving) broadcast({type:'car_move', carId: myPlayer.carId, x: myPlayer.x, y: myPlayer.y, dir: myPlayer.dir});
+      lastBroadcast = now;
+    }
   }
   for (const p of Object.values(remotePlayers)) {
     if (p.targetX !== undefined) {
@@ -987,6 +1092,74 @@ function drawTile(col, row) {
   }
 }
 
+function drawCar(car) {
+  const x = Math.round(car.x), y = Math.round(car.y);
+  const c = car.color || '#e74c3c';
+  const dir = car.dir;
+  ctx.save();
+  ctx.translate(x, y);
+
+  // car is roughly 40x24, orient by direction
+  if (dir === 1 || dir === 2) {
+    // horizontal
+    if (dir === 1) ctx.scale(-1, 1);
+    // body
+    ctx.fillStyle = c;
+    ctx.fillRect(-20, -10, 40, 20);
+    // windshield
+    ctx.fillStyle = '#85c1e9';
+    ctx.fillRect(10, -8, 8, 16);
+    // roof
+    ctx.fillStyle = shadeColor(c, -20);
+    ctx.fillRect(-10, -8, 20, 16);
+    // wheels
+    ctx.fillStyle = '#222';
+    ctx.fillRect(-16, -13, 8, 4);
+    ctx.fillRect(-16, 9, 8, 4);
+    ctx.fillRect(8, -13, 8, 4);
+    ctx.fillRect(8, 9, 8, 4);
+    // headlights
+    ctx.fillStyle = '#f9e79f';
+    ctx.fillRect(18, -7, 3, 5);
+    ctx.fillRect(18, 2, 3, 5);
+  } else {
+    // vertical
+    if (dir === 3) ctx.scale(1, -1);
+    ctx.fillStyle = c;
+    ctx.fillRect(-10, -20, 20, 40);
+    ctx.fillStyle = '#85c1e9';
+    ctx.fillRect(-8, 10, 16, 8);
+    ctx.fillStyle = shadeColor(c, -20);
+    ctx.fillRect(-8, -10, 16, 20);
+    ctx.fillStyle = '#222';
+    ctx.fillRect(-13, -16, 4, 8);
+    ctx.fillRect(9, -16, 4, 8);
+    ctx.fillRect(-13, 8, 4, 8);
+    ctx.fillRect(9, 8, 4, 8);
+    ctx.fillStyle = '#f9e79f';
+    ctx.fillRect(-7, 18, 5, 3);
+    ctx.fillRect(2, 18, 5, 3);
+  }
+
+  ctx.restore();
+
+  // label if empty
+  if (!car.driverPid) {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🚗', x, y - 18);
+  }
+}
+
+function shadeColor(hex, percent) {
+  let r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  r = Math.min(255, Math.max(0, r + Math.round(r * percent / 100)));
+  g = Math.min(255, Math.max(0, g + Math.round(g * percent / 100)));
+  b = Math.min(255, Math.max(0, b + Math.round(b * percent / 100)));
+  return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
+}
+
 function drawHpBar(x, y, hp) {
   const tw = 32, h = 4, gap = 1;
   const bw = (tw - gap*(MAX_HP-1)) / MAX_HP;
@@ -1002,6 +1175,24 @@ function drawCharacter(p, isMe) {
   const x = Math.round(p.x), y = Math.round(p.y);
   const color = p.color||'#e94560', name = p.name||'Player';
   const frame = p.frame||0, walking = p.walking, ghost = isGhost(p);
+  const inCar = (p.carId ?? -1) >= 0;
+
+  // if in car, only draw name/hp/chat above car, skip body
+  if (inCar) {
+    drawHpBar(x, y-30, p.hp??MAX_HP);
+    ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    const tw2 = ctx.measureText(name).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(x-tw2/2-3, y-44, tw2+6, 14);
+    ctx.fillStyle = isMe ? '#f0ad4e' : '#fff'; ctx.fillText(name, x, y-33);
+    if (p.emote && Date.now()-p.emoteTime < EMOTE_DURATION) {
+      const et = (Date.now()-p.emoteTime)/EMOTE_DURATION;
+      ctx.save(); ctx.globalAlpha = et<0.1?et/0.1:et>0.7?(1-et)/0.3:1;
+      ctx.font = `${Math.round(28*(et<0.15?0.5+et/0.15*0.5:1))}px sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(p.emote, x, y-60-et*20); ctx.restore();
+    }
+    if (p.chat && Date.now()-p.chatTime < CHAT_DURATION) drawChatBubble(x, y-50, p.chat, Math.min(1,(1-(Date.now()-p.chatTime)/CHAT_DURATION)*3));
+    return;
+  }
 
   ctx.save();
   if (ghost) ctx.globalAlpha = Math.sin(Date.now()/100)*0.15+0.3;
@@ -1176,10 +1367,19 @@ function draw() {
   const sr=Math.max(0,Math.floor(camY/TILE)), er=Math.min(MAP_ROWS,Math.ceil((camY+canvas.height)/TILE)+1);
   for (let r=sr;r<er;r++) for (let c=sc;c<ec;c++) drawTile(c,r);
 
+  // collect cars and players, sort by y for depth
   const all = [{...myPlayer, name:nameInput.value||'Player', _isMe:true}];
   for (const [pid, rp] of Object.entries(remotePlayers)) all.push({...rp, _isMe:false, _pid:pid});
-  all.sort((a,b) => a.y-b.y);
-  for (const p of all) drawCharacter(p, p._isMe);
+
+  const drawables = [];
+  for (const car of cars) drawables.push({ type:'car', y: car.y, car });
+  for (const p of all) drawables.push({ type:'player', y: p.y, p });
+  drawables.sort((a,b) => a.y - b.y);
+
+  for (const d of drawables) {
+    if (d.type === 'car') drawCar(d.car);
+    else drawCharacter(d.p, d.p._isMe);
+  }
   drawAttackEffects();
   ctx.restore();
 
@@ -1198,6 +1398,11 @@ function drawMinimap() {
     const t=MAP[r][c];
     ctx.fillStyle = t===0?'#4a7c59':t===1?'#5c5c6e':t===2?'#2e7d32':t===3?'#78909c':t===4?'#2980b9':t===5?'#4a7c59':t===6?'#8B7355':'#4a7c59';
     ctx.fillRect(mx+c*(mw/MAP_COLS), my+r*(mh/MAP_ROWS), mw/MAP_COLS+.5, mh/MAP_ROWS+.5);
+  }
+  // car dots
+  for (const car of cars) {
+    ctx.fillStyle = car.color || '#888';
+    ctx.fillRect(mx+car.x*sx-2, my+car.y*sy-1.5, 4, 3);
   }
   ctx.fillStyle = '#f0ad4e';
   ctx.beginPath(); ctx.arc(mx+myPlayer.x*sx,my+myPlayer.y*sy,3,0,Math.PI*2); ctx.fill();
