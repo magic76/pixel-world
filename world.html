@@ -888,19 +888,13 @@ function removeRemoteAudio(pid) {
 // ─── PeerJS ───
 function initPeer(customId, hostPeerId) {
   const iceServers = [
-      { urls: 'stun:stun.l.google.com:19302' },         // 免費 STUN
-      {
-        urls: 'turn:preview-1r0ywrjsvu.orba.qa1fdg.net:3478',               // 你的 TURN
-        username: 'myuser',
-        credential: 'mypassword'
-      },
-      {
-        urls: 'turns:preview-1r0ywrjsvu.orba.qa1fdg.net:5349',              // TLS 版本，更不容易被擋
-        username: 'myuser',
-        credential: 'mypassword'
-      }
-    ]
-  peer = customId ? new Peer(customId, { debug: 0, iceServers: iceServers }) : new Peer({ debug: 0, iceServers: iceServers });
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    { urls: 'turn:global.relay.metered.ca:80', username: 'bf9e9f52b6ca6c447be5a35d', credential: '/QFvmnlNld5aoHUq' },
+    { urls: 'turn:global.relay.metered.ca:443', username: 'bf9e9f52b6ca6c447be5a35d', credential: '/QFvmnlNld5aoHUq' },
+    { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: 'bf9e9f52b6ca6c447be5a35d', credential: '/QFvmnlNld5aoHUq' }
+  ];
+  const iceTransportPolicy = 'all'; // 測試用：強制走 TURN，驗證完改回 'all'
+  peer = customId ? new Peer(customId, { debug: 0, config: { iceServers, iceTransportPolicy } }) : new Peer({ debug: 0, config: { iceServers, iceTransportPolicy } });
 
   peer.on('open', id => {
     myId = id;
@@ -927,6 +921,23 @@ function initPeer(customId, hostPeerId) {
   });
 
   peer.on('call', call => handleIncomingCall(call));
+
+  // TURN 驗證 log（確認後可移除）
+  peer.on('connection', conn2 => {
+    const pc = conn2.peerConnection;
+    if (pc) {
+      pc.getStats().then(stats => {
+        stats.forEach(s => {
+          if (s.type === 'candidate-pair' && s.state === 'succeeded') {
+            const local = stats.get(s.localCandidateId);
+            const remote = stats.get(s.remoteCandidateId);
+            console.log('🔗 ICE connection type:', local?.candidateType, '→', remote?.candidateType);
+            console.log('   local:', local?.address, '| remote:', remote?.address);
+          }
+        });
+      });
+    }
+  });
 
   peer.on('error', err => {
     console.error('Peer error:', err);
