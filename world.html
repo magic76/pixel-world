@@ -225,7 +225,7 @@
     <h3>Players</h3>
     <div id="pl-entries"></div>
   </div>
-  <div id="help-hint">Arrows to move · Enter to chat · [ = ] attack · 🎤 voice</div>
+  <div id="help-hint">Arrows / WASD to move · Space to attack · Enter to chat · 🎤 voice</div>
   <div id="chat-bar">
     <button class="emote-btn" onclick="sendEmote('⭕')" title="O">⭕</button>
     <button class="emote-btn" onclick="sendEmote('❌')" title="X">❌</button>
@@ -814,6 +814,7 @@ function performAttack() {
   const now = Date.now();
   if (now - lastAttackTime < ATTACK_COOLDOWN || isGhost(myPlayer)) return;
   lastAttackTime = now;
+  myPlayer.attackTime = now;
   const ax = myPlayer.x, ay = myPlayer.y, dir = myPlayer.dir;
   addAttackEffect(ax, ay, dir);
   broadcast({ type: 'attack', x: ax, y: ay, dir });
@@ -832,7 +833,7 @@ function getAttackBox(x, y, dir) {
   if (dir===2) return {x1:x+5,y1:y-w,x2:x+5+r,y2:y+w};
   return {x1:x-w,y1:y-5-r,x2:x+w,y2:y-5};
 }
-function addAttackEffect(x,y,dir) { attackEffects.push({x,y,dir,time:Date.now()}); }
+function addAttackEffect(x,y,dir) { attackEffects.push({x,y,dir,time:Date.now(),type:'punch'}); }
 function addDamageFlash() { damageFlashUntil = Date.now() + 200; }
 function isGhost(p) { return p.ghostUntil && Date.now() < p.ghostUntil; }
 
@@ -858,16 +859,21 @@ nameInput.addEventListener('change', () => updatePlayerList());
 
 document.addEventListener('keydown', e => {
   if (chatFocused || !gameStarted) return;
-  if (e.key.startsWith('Arrow')) { keys[e.key] = true; e.preventDefault(); return; }
-  if (e.key === '=') { performAttack(); e.preventDefault(); return; }
-  if (e.key === 'Enter') {
+  const k = e.key;
+  if (k.startsWith('Arrow') || 'wasdWASD'.includes(k)) {
+    keys[k.toLowerCase()] = true;
+    e.preventDefault();
+    return;
+  }
+  if (k === ' ' || k === '=') { performAttack(); e.preventDefault(); return; }
+  if (k === 'Enter') {
     chatInput.classList.add('visible');
     chatInput.focus();
     e.preventDefault();
     return;
   }
 });
-document.addEventListener('keyup', e => { keys[e.key] = false; });
+document.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; keys[e.key] = false; });
 
 // ─── Collision ───
 function canMove(x, y) {
@@ -886,10 +892,10 @@ function update() {
   if (!gameStarted) return;
   if (chatFocused) { myPlayer.walking = false; return; }
   let dx = 0, dy = 0;
-  if (keys['ArrowUp']) dy = -SPEED;
-  if (keys['ArrowDown']) dy = SPEED;
-  if (keys['ArrowLeft']) dx = -SPEED;
-  if (keys['ArrowRight']) dx = SPEED;
+  if (keys['ArrowUp'] || keys['w']) dy = -SPEED;
+  if (keys['ArrowDown'] || keys['s']) dy = SPEED;
+  if (keys['ArrowLeft'] || keys['a']) dx = -SPEED;
+  if (keys['ArrowRight'] || keys['d']) dx = SPEED;
   if (dx && dy) { dx *= 0.707; dy *= 0.707; }
   myPlayer.walking = !!(dx || dy);
   if (dx || dy) {
@@ -912,7 +918,7 @@ function update() {
     }
   }
   const now = Date.now();
-  while (attackEffects.length && now-attackEffects[0].time>300) attackEffects.shift();
+  while (attackEffects.length && now-attackEffects[0].time>350) attackEffects.shift();
 }
 
 // ─── Drawing ───
@@ -1010,7 +1016,33 @@ function drawCharacter(p, isMe) {
   } else { ctx.fillRect(x-6,y+8,5,8); ctx.fillRect(x+1,y+8,5,8); }
 
   ctx.fillStyle = color; ctx.fillRect(x-8,y-12,16,21);
-  if (walking) {
+
+  // arms: check if punching
+  const punching = p.attackTime && (Date.now() - p.attackTime) < 250;
+  if (punching) {
+    const pt = (Date.now() - p.attackTime) / 250;
+    const extend = pt < 0.4 ? pt / 0.4 : 1 - (pt - 0.4) / 0.6;
+    const reach = extend * 14;
+    if (p.dir === 2) {
+      ctx.fillRect(x-11, y-8, 4, 14);
+      ctx.fillStyle = '#ffcc99'; ctx.fillRect(x+7+reach, y-6, 6, 6);
+      ctx.fillStyle = color; ctx.fillRect(x+7, y-8, 4+reach, 14);
+    } else if (p.dir === 1) {
+      ctx.fillRect(x+7, y-8, 4, 14);
+      ctx.fillStyle = '#ffcc99'; ctx.fillRect(x-13-reach, y-6, 6, 6);
+      ctx.fillStyle = color; ctx.fillRect(x-11-reach, y-8, 4+reach, 14);
+    } else if (p.dir === 0) {
+      ctx.fillRect(x-11, y-8, 4, 14);
+      ctx.fillStyle = color; ctx.fillRect(x+7, y-8, 4, 14);
+      ctx.fillStyle = '#ffcc99'; ctx.fillRect(x+5, y+4+reach, 6, 6);
+      ctx.fillStyle = color; ctx.fillRect(x+7, y-2, 4, 8+reach);
+    } else {
+      ctx.fillRect(x+7, y-8, 4, 14);
+      ctx.fillStyle = color; ctx.fillRect(x-11, y-8, 4, 14);
+      ctx.fillStyle = '#ffcc99'; ctx.fillRect(x-13, y-10-reach, 6, 6);
+      ctx.fillStyle = color; ctx.fillRect(x-11, y-8-reach, 4, 8+reach);
+    }
+  } else if (walking) {
     const as = Math.sin(frame*Math.PI/2)*3;
     ctx.fillRect(x-11,y-8+as,4,14); ctx.fillRect(x+7,y-8-as,4,14);
   } else { ctx.fillRect(x-11,y-8,4,14); ctx.fillRect(x+7,y-8,4,14); }
@@ -1093,16 +1125,38 @@ function drawChatBubble(x, y, text, alpha) {
 function drawAttackEffects() {
   const now = Date.now();
   for (const ef of attackEffects) {
-    const t = (now-ef.time)/300; if (t>1) continue;
-    ctx.save(); ctx.translate(ef.x, ef.y); ctx.globalAlpha = (1-t)*0.7;
-    let ox=0,oy=0,angle=0;
-    if (ef.dir===0) {oy=20;} else if (ef.dir===1) {ox=-20;angle=-Math.PI/2;}
-    else if (ef.dir===2) {ox=20;angle=Math.PI/2;} else {oy=-20;angle=Math.PI;}
-    ctx.translate(ox,oy); ctx.rotate(angle); ctx.scale(0.5+t*0.5, 0.5+t*0.5);
-    ctx.strokeStyle = '#ffe082'; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.arc(0,0,20,-Math.PI*0.6,Math.PI*0.6); ctx.stroke();
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(0,0,14,-Math.PI*0.4,Math.PI*0.4); ctx.stroke();
+    const t = (now-ef.time)/350; if (t>1) continue;
+    ctx.save();
+
+    let ox=0, oy=0;
+    if (ef.dir===0) { ox=ef.x; oy=ef.y+24; }
+    else if (ef.dir===1) { ox=ef.x-24; oy=ef.y; }
+    else if (ef.dir===2) { ox=ef.x+24; oy=ef.y; }
+    else { ox=ef.x; oy=ef.y-24; }
+
+    ctx.translate(ox, oy);
+    ctx.globalAlpha = (1-t)*0.9;
+
+    // impact burst lines
+    const scale = 0.3 + t * 0.7;
+    ctx.scale(scale, scale);
+    const spokes = 6;
+    for (let i = 0; i < spokes; i++) {
+      const angle = (i / spokes) * Math.PI * 2 + t * 2;
+      const innerR = 4, outerR = 12 + t * 8;
+      ctx.strokeStyle = i % 2 === 0 ? '#ffe082' : '#fff';
+      ctx.lineWidth = 3 - t * 2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(angle)*innerR, Math.sin(angle)*innerR);
+      ctx.lineTo(Math.cos(angle)*outerR, Math.sin(angle)*outerR);
+      ctx.stroke();
+    }
+
+    // center flash
+    ctx.fillStyle = '#fff';
+    ctx.globalAlpha = (1-t) * 0.6;
+    ctx.beginPath(); ctx.arc(0, 0, 6*(1-t), 0, Math.PI*2); ctx.fill();
+
     ctx.restore();
   }
 }
