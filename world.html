@@ -639,6 +639,11 @@ function generateMap(seed) {
     for (let c=midC-4;c<=midC+4;c++)
       if(r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=T.FLOOR;
 
+  // clear area for wardrobe (behind boss, row 5-9)
+  for (let r=5;r<=9;r++)
+    for (let c=midC-3;c<=midC+3;c++)
+      if(r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=T.FLOOR;
+
   // clear area for RPS table (left area near top)
   for (let r=6;r<=10;r++)
     for (let c=20;c<=24;c++)
@@ -661,21 +666,21 @@ const EQUIP_LIST = [
   { id:'halo',     name:'😇 Halo',        slot:'head',  color:'#f9e79f', desc:'Angel halo' },
   { id:'horns',    name:'😈 Horns',       slot:'head',  color:'#e74c3c', desc:'Devil horns' },
   { id:'cape',     name:'🦸 Cape',        slot:'body',  color:'#e94560', desc:'Hero cape' },
-  { id:'armor',    name:'🛡️ Armor',       slot:'body',  color:'#5dade2', desc:'Blue armor' },
-  { id:'tux',      name:'🤵 Tuxedo',      slot:'body',  color:'#2c3e50', desc:'Fancy tuxedo' },
   { id:'wings',    name:'🪽 Wings',       slot:'back',  color:'#aed6f1', desc:'Angel wings' },
   { id:'jetpack',  name:'🚀 Jetpack',     slot:'back',  color:'#e67e22', desc:'Jetpack' },
   { id:'scarf',    name:'🧣 Scarf',       slot:'neck',  color:'#e74c3c', desc:'Red scarf' },
   { id:'glasses',  name:'🕶️ Sunglasses', slot:'face',  color:'#222',    desc:'Cool shades' },
   { id:'mask',     name:'🎭 Mask',        slot:'face',  color:'#8e44ad', desc:'Mystery mask' },
   { id:'sword',    name:'⚔️ Sword',       slot:'hand',  color:'#bdc3c7', desc:'Steel sword' },
-  { id:'shield',   name:'🛡️ Shield',      slot:'hand',  color:'#2980b9', desc:'Blue shield' },
+  { id:'shield',   name:'🛡️ Shield',      slot:'hand2', color:'#2980b9', desc:'Blue shield' },
   { id:'wand',     name:'🪄 Wand',        slot:'hand',  color:'#9b59b6', desc:'Magic wand' },
-  { id:'boots',    name:'👢 Boots',       slot:'feet',  color:'#8b4513', desc:'Leather boots' },
-  { id:'sneakers', name:'👟 Sneakers',    slot:'feet',  color:'#2ecc71', desc:'Green sneakers' },
   { id:'aura_fire',name:'🔥 Fire Aura',   slot:'aura',  color:'#e74c3c', desc:'Burning aura' },
   { id:'aura_ice', name:'❄️ Ice Aura',    slot:'aura',  color:'#5dade2', desc:'Frost aura' },
   { id:'aura_gold',name:'✨ Gold Aura',   slot:'aura',  color:'#f1c40f', desc:'Sparkling aura' },
+  { id:'pet_cat',  name:'🐱 Pet Cat',     slot:'pet',   color:'#f39c12', desc:'Cute cat follows' },
+  { id:'pet_dog',  name:'🐕 Pet Dog',     slot:'pet',   color:'#8B4513', desc:'Loyal dog follows' },
+  { id:'trail_fire',name:'🔥 Fire Trail', slot:'trail', color:'#e74c3c', desc:'Fiery footsteps' },
+  { id:'trail_star',name:'⭐ Star Trail', slot:'trail', color:'#f1c40f', desc:'Starry footsteps' },
 ];
 
 // ─── Chests ───
@@ -815,12 +820,39 @@ function drawResetSwitch() {
 
 // ─── Boss NPC ───
 const BOSS_RANGE = 5 * TILE;
+const bossOrigin = { x: (MAP_COLS / 2 | 0) * TILE + TILE / 2, y: 13 * TILE + TILE / 2 };
 const boss = {
-  x: (MAP_COLS / 2 | 0) * TILE + TILE / 2,
-  y: 13 * TILE + TILE / 2,
+  x: bossOrigin.x,
+  y: bossOrigin.y,
   angry: false, angryUntil: 0,
   lastYell: 0,
+  dir: 0, walkTarget: null, walkTimer: 0,
 };
+let bossName = '👔 Boss';
+
+// ─── Wardrobe ───
+const wardrobe = {
+  x: bossOrigin.x,
+  y: 7 * TILE + TILE / 2,
+};
+const WARDROBE_RANGE = 50;
+const OUTFITS = [
+  { id:'outfit_suit', name:'🤵 Suit', color:'#2c3e50' },
+  { id:'outfit_casual', name:'👕 Casual', color:'#3498db' },
+  { id:'outfit_sporty', name:'🏃 Sporty', color:'#e74c3c' },
+  { id:'outfit_military', name:'🎖️ Military', color:'#27ae60' },
+  { id:'outfit_pink', name:'💖 Pink', color:'#e91e9c' },
+  { id:'outfit_gold', name:'✨ Gold', color:'#f1c40f' },
+  { id:'outfit_ninja', name:'🥷 Ninja', color:'#1a1a2e' },
+  { id:'outfit_sailor', name:'⛵ Sailor', color:'#2980b9' },
+  { id:'outfit_chef', name:'👨‍🍳 Chef', color:'#ecf0f1' },
+  { id:'outfit_rocker', name:'🎸 Rocker', color:'#8e44ad' },
+];
+const AVATAR_CHOICES = [
+  '😎','🤖','👽','🦊','🐱','🐼','🦁','🐸','🐉','💀',
+];
+let myOutfit = null;
+let myChosenAvatar = null;
 const BOSS_YELLS = [
   '😡 Who told you to slack off!?',
   '🔥 Get back to work NOW!',
@@ -835,6 +867,35 @@ const BOSS_YELLS = [
 function isNearBoss(px, py) {
   const dx = px - boss.x, dy = py - boss.y;
   return Math.sqrt(dx*dx + dy*dy) < BOSS_RANGE;
+}
+
+function isNearWardrobe(px, py) {
+  const dx = px - wardrobe.x, dy = py - wardrobe.y;
+  return Math.sqrt(dx*dx + dy*dy) < WARDROBE_RANGE;
+}
+
+function openWardrobeMenu() {
+  let menu = '=== 衣櫃 / Wardrobe ===\n\n--- Outfits ---\n';
+  OUTFITS.forEach((o, i) => menu += (i+1) + '. ' + o.name + '\n');
+  menu += '\n--- Avatars ---\n';
+  AVATAR_CHOICES.forEach((a, i) => menu += (i+11) + '. ' + a + '\n');
+  menu += '\n0 = Remove outfit\nEnter number:';
+  const pick = prompt(menu);
+  if (!pick) return;
+  const n = parseInt(pick);
+  if (n === 0) {
+    myOutfit = null; myChosenAvatar = null;
+    myPlayer.color = COLORS[Math.floor(Math.random() * COLORS.length)];
+    notify('Outfit removed');
+  } else if (n >= 1 && n <= 10) {
+    myOutfit = OUTFITS[n-1];
+    myPlayer.color = myOutfit.color;
+    notify('🎽 Wearing ' + myOutfit.name);
+  } else if (n >= 11 && n <= 20) {
+    myChosenAvatar = AVATAR_CHOICES[n-11];
+    notify('Changed avatar to ' + myChosenAvatar);
+  }
+  broadcast({ type: 'move', player: getMyState() });
 }
 
 function drawBoss() {
@@ -930,7 +991,7 @@ function drawBoss() {
   // name tag (relative coords, inside scale)
   ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
   ctx.fillStyle = '#e74c3c';
-  ctx.fillText('👔 Boss', 0, -14*scale - 8);
+  ctx.fillText(bossName, 0, -14*scale - 8);
 
   // angry speech bubble
   if (isAngry && now - boss.lastYell > 3000) {
@@ -1554,7 +1615,7 @@ function setupPeerListeners(targetHostId) {
         players: getRemotePlayerStates(),
         peers: Object.keys(connections).filter(i => i !== pid),
         cars, chests, whiteboardEntries,
-        knownPeerIds, voteState, bossHp, bossDead,
+        knownPeerIds, voteState, bossHp, bossDead, bossName,
       });
       updateOnlineCount(); updatePlayerList();
     });
@@ -1652,6 +1713,7 @@ function handleData(fromId, data) {
       if (data.voteState) voteState = data.voteState;
       if (data.bossHp !== undefined) bossHp = data.bossHp;
       if (data.bossDead) { bossDead = true; bossDeadTime = Date.now(); }
+      if (data.bossName) bossName = data.bossName;
       startGame();
       break;
     case 'join':
@@ -1691,6 +1753,7 @@ function handleData(fromId, data) {
       if (data.player.title !== undefined) rp.title = data.player.title;
       if (data.sitting !== undefined) rp.sitting = data.sitting;
       else if (data.player.sitting !== undefined) rp.sitting = data.player.sitting;
+      if (data.player.chosenAvatar !== undefined) rp.chosenAvatar = data.player.chosenAvatar;
       break;
     }
     case 'chat':
@@ -1840,12 +1903,16 @@ function handleData(fromId, data) {
     case 'boss_drop':
       notify('🎁 ' + (remotePlayers[data.from]?.name||'Someone') + ' got ' + data.item + ' from Boss!');
       break;
+    case 'boss_name':
+      bossName = data.name;
+      notify('Boss is now named: ' + bossName);
+      break;
   }
 }
 
 function makeRemote(p, pid) {
   if (p.avatar && pid) loadRemoteAvatar(pid, p.avatar);
-  return { ...p, targetX: p.x, targetY: p.y, hp: p.hp ?? MAX_HP, ghostUntil: p.ghostUntil ?? 0, voiceOn: false, emote: '', emoteTime: 0, chatImage: '', chatImageTime: 0, equips: p.equips || [], title: p.title || '', sitting: p.sitting || false };
+  return { ...p, targetX: p.x, targetY: p.y, hp: p.hp ?? MAX_HP, ghostUntil: p.ghostUntil ?? 0, voiceOn: false, emote: '', emoteTime: 0, chatImage: '', chatImageTime: 0, equips: p.equips || [], title: p.title || '', sitting: p.sitting || false, chosenAvatar: p.chosenAvatar || null };
 }
 
 function connectToPeer(tid) {
@@ -1866,7 +1933,7 @@ function getMyState() {
   return { x: myPlayer.x, y: myPlayer.y, dir: myPlayer.dir, frame: myPlayer.frame,
     walking: myPlayer.walking, color: myPlayer.color, name: nameInput.value||'Player',
     hp: myPlayer.hp, ghostUntil: myPlayer.ghostUntil, avatar: myAvatarDataUrl, carId: myPlayer.carId,
-    equips: myPlayer.equips, title: myTitle, sitting: isSitting };
+    equips: myPlayer.equips, title: myTitle, sitting: isSitting, chosenAvatar: myChosenAvatar };
 }
 
 function getRemotePlayerStates() {
@@ -1942,6 +2009,13 @@ function performAttack() {
     return;
   }
 
+  // wardrobe
+  if (isNearWardrobe(myPlayer.x, myPlayer.y)) {
+    lastAttackTime = now;
+    openWardrobeMenu();
+    return;
+  }
+
   // sit down on chair
   if (!isSitting && trySitDown()) { lastAttackTime = now; return; }
 
@@ -1971,6 +2045,13 @@ function performAttack() {
       myPlayer.equips.push(drop);
       notify('🏆 Boss defeated! Got ' + drop + '!');
       broadcast({ type: 'boss_drop', item: drop, from: myId });
+      setTimeout(() => {
+        const newName = prompt('You defeated the Boss! Give the Boss a new name:');
+        if (newName && newName.trim()) {
+          bossName = newName.trim();
+          broadcast({ type: 'boss_name', name: bossName });
+        }
+      }, 500);
     }
     broadcast({ type: 'boss_hp', hp: bossHp, dead: bossDead });
     addAttackEffect(myPlayer.x, myPlayer.y, myPlayer.dir);
@@ -2249,7 +2330,40 @@ function update() {
   // boss respawn
   if (bossDead && Date.now() - bossDeadTime > BOSS_RESPAWN_TIME) {
     bossDead = false; bossHp = BOSS_HP_MAX;
+    boss.x = bossOrigin.x; boss.y = bossOrigin.y;
     broadcast({ type: 'boss_hp', hp: bossHp, dead: false });
+  }
+
+  // boss wander
+  if (!bossDead) {
+    const now2 = Date.now();
+    if (!boss.walkTarget && now2 > boss.walkTimer) {
+      const wanderR = 4 * TILE;
+      boss.walkTarget = {
+        x: bossOrigin.x + (Math.random()-0.5) * wanderR * 2,
+        y: bossOrigin.y + (Math.random()-0.5) * wanderR * 2,
+      };
+      boss.walkTimer = now2 + 3000 + Math.random() * 4000;
+    }
+    if (boss.walkTarget) {
+      const bdx = boss.walkTarget.x - boss.x, bdy = boss.walkTarget.y - boss.y;
+      const bdist = Math.sqrt(bdx*bdx + bdy*bdy);
+      if (bdist > 3) {
+        const bspd = boss.angry ? 1.5 : 0.8;
+        boss.x += (bdx/bdist) * bspd;
+        boss.y += (bdy/bdist) * bspd;
+        if (Math.abs(bdx) > Math.abs(bdy)) boss.dir = bdx < 0 ? 1 : 2;
+        else boss.dir = bdy < 0 ? 3 : 0;
+      } else {
+        boss.walkTarget = null;
+      }
+    }
+  }
+
+  // auto-restore HP after ghost period ends
+  if (myPlayer.hp <= 0 && myPlayer.ghostUntil && Date.now() > myPlayer.ghostUntil) {
+    myPlayer.hp = MAX_HP;
+    broadcast({ type: 'hp_update', hp: myPlayer.hp, ghostUntil: myPlayer.ghostUntil });
   }
 
   // boss attacks nearby players
@@ -3070,6 +3184,12 @@ function drawEquipment(x, y, dir, equips, frame) {
         ctx.fillStyle = '#f1c40f';
         ctx.fillRect(-7, -24, 14, 5);
         ctx.fillRect(-9, -27, 4, 4); ctx.fillRect(-1, -29, 3, 6); ctx.fillRect(5, -27, 4, 4);
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(-7, -25, 2, 2); ctx.fillRect(1, -27, 2, 2); ctx.fillRect(7, -25, 2, 2);
+        ctx.globalAlpha = 0.3 + 0.2*Math.sin(now*0.005);
+        ctx.fillStyle = '#fef9c3';
+        ctx.beginPath(); ctx.arc(0, -26, 12, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
         break;
       case 'helmet':
         ctx.fillStyle = '#7f8c8d';
@@ -3078,133 +3198,231 @@ function drawEquipment(x, y, dir, equips, frame) {
         ctx.fillRect(-6, -26, 12, 4);
         ctx.fillStyle = '#bdc3c7';
         ctx.fillRect(-2, -17, 4, 3);
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(-1, -26, 2, 4);
         break;
       case 'halo':
-        ctx.strokeStyle = '#f9e79f';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.ellipse(0, -26, 10, 3, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.strokeStyle = 'rgba(249,231,159,0.3)';
-        ctx.beginPath();
-        ctx.ellipse(0, -26, 12, 4, 0, 0, Math.PI * 2);
-        ctx.stroke();
+        ctx.strokeStyle = '#f9e79f'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.ellipse(0, -26, 10, 3, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 0.4 + 0.3*Math.sin(now*0.004);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(0, -26, 13, 4, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 1;
+        for (let i=0;i<6;i++) {
+          const a=now*0.003+i*1.05, r=12;
+          ctx.fillStyle='rgba(249,231,159,0.6)';
+          ctx.fillRect(Math.cos(a)*r-1, -26+Math.sin(a)*3-1, 2, 2);
+        }
         break;
       case 'horns':
         ctx.fillStyle = '#c0392b';
-        ctx.beginPath(); ctx.moveTo(-8, -20); ctx.lineTo(-12, -30); ctx.lineTo(-4, -22); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(8, -20); ctx.lineTo(12, -30); ctx.lineTo(4, -22); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-8, -20); ctx.lineTo(-14, -32); ctx.lineTo(-4, -22); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(8, -20); ctx.lineTo(14, -32); ctx.lineTo(4, -22); ctx.fill();
+        ctx.fillStyle = '#e74c3c';
+        ctx.beginPath(); ctx.moveTo(-10, -24); ctx.lineTo(-13, -30); ctx.lineTo(-6, -22); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(10, -24); ctx.lineTo(13, -30); ctx.lineTo(6, -22); ctx.fill();
+        ctx.globalAlpha=0.2+0.15*Math.sin(now*0.006);
+        ctx.fillStyle='rgba(231,76,60,0.4)';
+        ctx.beginPath(); ctx.arc(0,-10,20,0,Math.PI*2); ctx.fill();
+        ctx.globalAlpha=1;
         break;
       case 'cape': {
-        const swing = Math.sin(now * 0.004) * 3;
+        const swing = Math.sin(now * 0.004) * 5;
+        const swing2 = Math.sin(now * 0.006) * 3;
         ctx.fillStyle = eq.color;
         ctx.beginPath();
-        ctx.moveTo(-6, -8); ctx.lineTo(-8 + swing, 12); ctx.lineTo(8 + swing, 12); ctx.lineTo(6, -8);
+        ctx.moveTo(-7, -8); ctx.lineTo(-10 + swing, 16); ctx.lineTo(10 + swing, 16); ctx.lineTo(7, -8);
         ctx.fill();
-        ctx.fillStyle = 'rgba(0,0,0,0.15)';
+        ctx.fillStyle = shadeColor(eq.color, 20);
         ctx.beginPath();
-        ctx.moveTo(-4, -4); ctx.lineTo(-6 + swing, 12); ctx.lineTo(6 + swing, 12); ctx.lineTo(4, -4);
+        ctx.moveTo(-4, -4); ctx.lineTo(-7 + swing2, 14); ctx.lineTo(7 + swing2, 14); ctx.lineTo(4, -4);
         ctx.fill();
+        ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(-7,-8); ctx.lineTo(-10+swing,16); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(7,-8); ctx.lineTo(10+swing,16); ctx.stroke();
         break;
       }
-      case 'armor':
-        ctx.fillStyle = '#5dade2';
-        ctx.globalAlpha = 0.6;
-        ctx.fillRect(-8, -10, 16, 14);
-        ctx.fillStyle = '#85c1e9';
-        ctx.fillRect(-6, -8, 12, 3);
-        ctx.globalAlpha = 1;
-        break;
-      case 'tux':
-        ctx.fillStyle = '#2c3e50';
-        ctx.fillRect(-7, -8, 14, 12);
-        ctx.fillStyle = '#ecf0f1';
-        ctx.fillRect(-2, -8, 4, 10);
-        ctx.fillStyle = '#e74c3c';
-        ctx.fillRect(-1, -7, 2, 2);
-        break;
       case 'wings': {
-        const flap = Math.sin(now * 0.006) * 4;
-        ctx.fillStyle = 'rgba(174,214,241,0.6)';
+        const flap = Math.sin(now * 0.006) * 6;
+        const flap2 = Math.sin(now * 0.008 + 0.5) * 3;
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = '#aed6f1';
         ctx.beginPath();
-        ctx.moveTo(-6, -6); ctx.lineTo(-18 - flap, -14); ctx.lineTo(-16 - flap, 2); ctx.fill();
+        ctx.moveTo(-6, -6); ctx.lineTo(-20 - flap, -16); ctx.lineTo(-22 - flap, -6);
+        ctx.lineTo(-18 - flap2, 4); ctx.fill();
         ctx.beginPath();
-        ctx.moveTo(6, -6); ctx.lineTo(18 + flap, -14); ctx.lineTo(16 + flap, 2); ctx.fill();
+        ctx.moveTo(6, -6); ctx.lineTo(20 + flap, -16); ctx.lineTo(22 + flap, -6);
+        ctx.lineTo(18 + flap2, 4); ctx.fill();
+        ctx.fillStyle = '#d4effc';
+        ctx.beginPath(); ctx.moveTo(-6,-4); ctx.lineTo(-16-flap,-12); ctx.lineTo(-14-flap2,2); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(6,-4); ctx.lineTo(16+flap,-12); ctx.lineTo(14+flap2,2); ctx.fill();
+        ctx.globalAlpha = 1;
+        for (let i=0;i<4;i++) {
+          ctx.fillStyle='rgba(255,255,255,0.5)';
+          const fx=Math.cos(now*0.004+i)*3, fy=-10-i*3+Math.sin(now*0.005+i)*2;
+          ctx.fillRect(-16-flap+fx, fy, 2, 1);
+          ctx.fillRect(14+flap+fx, fy, 2, 1);
+        }
         break;
       }
       case 'jetpack':
+        ctx.fillStyle = '#5d6d7e';
+        ctx.fillRect(-10, -8, 5, 14); ctx.fillRect(5, -8, 5, 14);
         ctx.fillStyle = '#7f8c8d';
-        ctx.fillRect(-10, -8, 5, 12); ctx.fillRect(5, -8, 5, 12);
+        ctx.fillRect(-9, -6, 3, 10); ctx.fillRect(6, -6, 3, 10);
         ctx.fillStyle = '#e67e22';
-        const flame = 4 + Math.sin(now * 0.02) * 3;
-        ctx.fillRect(-9, 4, 3, flame); ctx.fillRect(6, 4, 3, flame);
+        const flame = 6 + Math.sin(now * 0.02) * 4;
+        const flame2 = 5 + Math.cos(now * 0.025) * 3;
+        ctx.fillRect(-9, 6, 3, flame); ctx.fillRect(6, 6, 3, flame2);
+        ctx.fillStyle = '#f1c40f';
+        ctx.fillRect(-8, 6, 1, flame*0.7); ctx.fillRect(7, 6, 1, flame2*0.7);
+        for (let i=0;i<3;i++) {
+          ctx.fillStyle='rgba(255,160,0,0.3)';
+          ctx.fillRect(-10+Math.random()*4, 6+flame+Math.random()*4, 2, 2);
+          ctx.fillRect(5+Math.random()*4, 6+flame2+Math.random()*4, 2, 2);
+        }
         break;
       case 'scarf': {
-        const sw = Math.sin(now * 0.005) * 4;
+        const sw = Math.sin(now * 0.005) * 6;
+        const sw2 = Math.sin(now * 0.007) * 4;
         ctx.fillStyle = '#e74c3c';
         ctx.fillRect(-7, -12, 14, 4);
         ctx.beginPath();
-        ctx.moveTo(6, -10); ctx.lineTo(10 + sw, 0); ctx.lineTo(6 + sw, 2); ctx.lineTo(4, -8);
+        ctx.moveTo(6, -10); ctx.lineTo(12 + sw, 2); ctx.lineTo(10 + sw2, 8);
+        ctx.lineTo(6 + sw, 4); ctx.lineTo(4, -8);
+        ctx.fill();
+        ctx.fillStyle = '#c0392b';
+        ctx.beginPath();
+        ctx.moveTo(7,-10); ctx.lineTo(10+sw,0); ctx.lineTo(8+sw2,4); ctx.lineTo(5,-8);
         ctx.fill();
         break;
       }
       case 'glasses':
-        ctx.fillStyle = '#222';
+        ctx.fillStyle = '#111';
         ctx.fillRect(-7, -18, 6, 4); ctx.fillRect(1, -18, 6, 4);
-        ctx.fillRect(-1, -17, 2, 2);
-        ctx.fillStyle = 'rgba(50,50,50,0.5)';
+        ctx.fillRect(-1, -17, 2, 2); ctx.fillRect(-8,-17,1,2); ctx.fillRect(7,-17,1,2);
+        ctx.fillStyle = 'rgba(30,30,30,0.6)';
         ctx.fillRect(-6, -17, 4, 2); ctx.fillRect(2, -17, 4, 2);
+        ctx.globalAlpha=0.2;
+        ctx.fillStyle='#fff';
+        ctx.fillRect(-5,-17,1,1); ctx.fillRect(3,-17,1,1);
+        ctx.globalAlpha=1;
         break;
       case 'mask':
-        ctx.fillStyle = '#8e44ad';
-        ctx.globalAlpha = 0.7;
-        ctx.fillRect(-7, -20, 14, 7);
+        ctx.fillStyle = '#8e44ad'; ctx.globalAlpha = 0.8;
+        ctx.fillRect(-7, -22, 14, 8);
+        ctx.fillStyle = '#9b59b6';
+        ctx.fillRect(-6, -21, 12, 6);
         ctx.globalAlpha = 1;
         ctx.fillStyle = '#f1c40f';
-        ctx.fillRect(-5, -19, 3, 3); ctx.fillRect(2, -19, 3, 3);
+        ctx.fillRect(-5, -20, 3, 3); ctx.fillRect(2, -20, 3, 3);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(-4, -19, 1, 1); ctx.fillRect(3, -19, 1, 1);
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(-6, -22, 1, 2); ctx.fillRect(5, -22, 1, 2);
+        ctx.fillRect(-3, -22, 6, 1);
         break;
       case 'sword': {
         const angle = dir === 0 ? 0.3 : dir === 3 ? -0.3 : dir === 1 ? -0.8 : 0.8;
-        ctx.save();
-        ctx.rotate(angle);
-        ctx.fillStyle = '#bdc3c7'; ctx.fillRect(7, -14, 3, 16);
-        ctx.fillStyle = '#f1c40f'; ctx.fillRect(5, 0, 7, 3);
-        ctx.fillStyle = '#8B4513'; ctx.fillRect(7, 3, 3, 5);
+        const glow = 0.2+0.15*Math.sin(now*0.005);
+        ctx.save(); ctx.rotate(angle);
+        ctx.fillStyle = '#d5d8dc'; ctx.fillRect(7, -16, 3, 18);
+        ctx.fillStyle = '#ecf0f1'; ctx.fillRect(8, -14, 1, 14);
+        ctx.fillStyle = '#f1c40f'; ctx.fillRect(4, 0, 9, 3);
+        ctx.fillStyle = '#e74c3c'; ctx.fillRect(7, 0, 3, 1);
+        ctx.fillStyle = '#8B4513'; ctx.fillRect(7, 3, 3, 6);
+        ctx.globalAlpha = glow;
+        ctx.fillStyle = '#aed6f1';
+        ctx.fillRect(6, -16, 5, 18);
+        ctx.globalAlpha = 1;
         ctx.restore();
         break;
       }
       case 'shield': {
-        const sx = dir === 1 ? -12 : dir === 2 ? 8 : -12;
+        const sx = dir === 1 ? -14 : dir === 2 ? 8 : -14;
         ctx.fillStyle = '#2980b9';
         ctx.beginPath();
-        ctx.moveTo(sx, -8); ctx.lineTo(sx + 10, -8); ctx.lineTo(sx + 10, 2);
-        ctx.lineTo(sx + 5, 6); ctx.lineTo(sx, 2); ctx.fill();
+        ctx.moveTo(sx, -10); ctx.lineTo(sx + 12, -10); ctx.lineTo(sx + 12, 2);
+        ctx.lineTo(sx + 6, 8); ctx.lineTo(sx, 2); ctx.fill();
+        ctx.fillStyle = '#3498db';
+        ctx.beginPath();
+        ctx.moveTo(sx+1, -9); ctx.lineTo(sx + 11, -9); ctx.lineTo(sx + 11, 1);
+        ctx.lineTo(sx + 6, 6); ctx.lineTo(sx+1, 1); ctx.fill();
         ctx.fillStyle = '#f1c40f';
-        ctx.fillRect(sx + 3, -5, 4, 4);
+        ctx.beginPath(); ctx.arc(sx+6, -2, 3, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(sx+5, -3, 2, 2);
         break;
       }
       case 'wand': {
         const angle = dir === 0 ? 0.5 : dir === 3 ? -0.5 : dir === 1 ? -1 : 1;
         ctx.save(); ctx.rotate(angle);
-        ctx.fillStyle = '#8B4513'; ctx.fillRect(8, -2, 14, 3);
+        ctx.fillStyle = '#6c3483'; ctx.fillRect(8, -2, 16, 3);
+        ctx.fillStyle = '#8e44ad'; ctx.fillRect(9, -1, 14, 1);
+        const sparkle = Math.sin(now * 0.01) * 3;
         ctx.fillStyle = '#f9e79f';
-        const sparkle = Math.sin(now * 0.01) * 2;
-        ctx.fillRect(20 + sparkle, -5, 4, 4);
-        ctx.fillRect(22, -3 + sparkle, 4, 4);
+        ctx.beginPath(); ctx.arc(24+sparkle, -1, 4, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(24+sparkle, -1, 2, 0, Math.PI*2); ctx.fill();
+        for (let i=0;i<5;i++) {
+          const sa=now*0.008+i*1.26, sr=6+Math.sin(now*0.006+i)*2;
+          ctx.fillStyle='rgba(249,231,159,0.6)';
+          ctx.fillRect(24+sparkle+Math.cos(sa)*sr-1, -1+Math.sin(sa)*sr-1, 2, 2);
+        }
         ctx.restore();
         break;
       }
-      case 'boots':
-        ctx.fillStyle = '#8b4513';
-        ctx.fillRect(-7, 6, 5, 5); ctx.fillRect(2, 6, 5, 5);
-        ctx.fillRect(-8, 9, 6, 3); ctx.fillRect(1, 9, 6, 3);
+      case 'pet_cat': {
+        const px = dir===1?12:dir===2?-12:8, py = 8+Math.sin(now*0.004)*2;
+        ctx.fillStyle = '#f39c12';
+        ctx.fillRect(px-4, py-3, 8, 6);
+        ctx.fillRect(px-5, py-6, 3, 4); ctx.fillRect(px+2, py-6, 3, 4);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(px-2, py-2, 1, 1); ctx.fillRect(px+1, py-2, 1, 1);
+        ctx.fillStyle = '#e91e63';
+        ctx.fillRect(px-1, py, 2, 1);
+        ctx.fillStyle = '#f39c12';
+        const tail = Math.sin(now*0.006)*4;
+        ctx.fillRect(px+4, py-2+tail, 5, 2);
         break;
-      case 'sneakers':
-        ctx.fillStyle = '#2ecc71';
-        ctx.fillRect(-7, 6, 5, 4); ctx.fillRect(2, 6, 5, 4);
-        ctx.fillStyle = '#ecf0f1';
-        ctx.fillRect(-7, 9, 6, 2); ctx.fillRect(2, 9, 6, 2);
+      }
+      case 'pet_dog': {
+        const px = dir===1?12:dir===2?-12:-8, py = 8+Math.sin(now*0.005)*2;
+        ctx.fillStyle = '#8B4513';
+        ctx.fillRect(px-5, py-3, 10, 7);
+        ctx.fillRect(px-6, py-6, 4, 5); ctx.fillRect(px+2, py-6, 4, 5);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(px-3, py-3, 2, 1); ctx.fillRect(px+1, py-3, 2, 1);
+        ctx.fillStyle = '#D2691E';
+        ctx.fillRect(px-1, py-1, 2, 2);
+        const wag = Math.sin(now*0.01)*5;
+        ctx.fillStyle = '#8B4513';
+        ctx.fillRect(px+5, py-4+wag, 4, 2);
         break;
+      }
+      case 'trail_fire': {
+        for (let i=0;i<4;i++) {
+          const age = (now*0.003+i*0.8)%3.2;
+          if (age>1) continue;
+          ctx.globalAlpha = 0.5*(1-age);
+          ctx.fillStyle = age<0.3?'#e74c3c':'#f39c12';
+          ctx.fillRect(-3+Math.sin(i)*4, 12+i*3, 3+Math.random()*2, 3);
+        }
+        ctx.globalAlpha = 1;
+        break;
+      }
+      case 'trail_star': {
+        for (let i=0;i<5;i++) {
+          const age = (now*0.002+i*0.6)%2.5;
+          if (age>1) continue;
+          ctx.globalAlpha = 0.6*(1-age);
+          ctx.fillStyle = '#f1c40f';
+          const sx2 = Math.sin(now*0.003+i*1.5)*6, sy2 = 10+i*4;
+          ctx.fillRect(sx2-1, sy2, 3, 1); ctx.fillRect(sx2, sy2-1, 1, 3);
+        }
+        ctx.globalAlpha = 1;
+        break;
+      }
       case 'aura_fire': {
         ctx.globalAlpha = 0.25 + 0.1 * Math.sin(now * 0.008);
         const grad = ctx.createRadialGradient(0, 0, 5, 0, 0, 22);
@@ -3320,7 +3538,7 @@ function drawCharacter(p, isMe) {
   const extend = punching ? (pt < 0.4 ? pt/0.4 : 1-(pt-0.4)/0.6) : 0;
   const reach = extend * 16;
 
-  // legs with shoes
+  // legs with shoes - direction dependent
   const darkColor = shadeColor(color, -25);
   const pSitting = isMe ? isSitting : p.sitting;
   ctx.fillStyle = '#34495e';
@@ -3329,6 +3547,20 @@ function drawCharacter(p, isMe) {
     ctx.fillRect(x-8, y+6, 8, 5); ctx.fillRect(x, y+6, 8, 5);
     ctx.fillStyle = '#2c3e50';
     ctx.fillRect(x-9, y+9, 6, 4); ctx.fillRect(x+3, y+9, 6, 4);
+  } else if (p.dir === 1 || p.dir === 2) {
+    // side view legs
+    if (walking) {
+      const ls = Math.sin(frame*Math.PI/2)*5;
+      ctx.fillRect(x-3, y+6+ls, 4, 9); ctx.fillRect(x-1, y+6-ls, 4, 9);
+      ctx.fillStyle = '#2c3e50';
+      const shoeDir = p.dir === 2 ? 1 : -5;
+      ctx.fillRect(x-3+shoeDir, y+13+ls, 6, 4); ctx.fillRect(x-1+shoeDir, y+13-ls, 6, 4);
+    } else {
+      ctx.fillRect(x-3, y+6, 4, 9); ctx.fillRect(x-1, y+6, 4, 9);
+      ctx.fillStyle = '#2c3e50';
+      const shoeDir = p.dir === 2 ? 1 : -5;
+      ctx.fillRect(x-2+shoeDir, y+13, 6, 4);
+    }
   } else if (walking) {
     const ls = Math.sin(frame*Math.PI/2)*5;
     ctx.fillRect(x-6, y+6+ls, 5, 9); ctx.fillRect(x+1, y+6-ls, 5, 9);
@@ -3340,102 +3572,181 @@ function drawCharacter(p, isMe) {
     ctx.fillRect(x-7, y+13, 7, 4); ctx.fillRect(x, y+13, 7, 4);
   }
 
-  // torso
-  ctx.fillStyle = color;
-  ctx.fillRect(x-8, y-12, 16, 20);
-  ctx.fillStyle = darkColor;
-  ctx.fillRect(x-8, y-12, 16, 3);
-  // collar / shirt detail
-  ctx.fillStyle = shadeColor(color, 15);
-  ctx.fillRect(x-3, y-12, 6, 5);
+  // torso - direction dependent
+  const skinColor = '#f5cba7';
+  const d = p.dir; // 0=down, 1=left, 2=right, 3=up
 
-  // belt
-  ctx.fillStyle = '#2c3e50';
-  ctx.fillRect(x-8, y+5, 16, 3);
-  ctx.fillStyle = '#f1c40f';
-  ctx.fillRect(x-2, y+5, 4, 3);
+  if (d === 3) {
+    // BACK VIEW
+    ctx.fillStyle = color;
+    ctx.fillRect(x-8, y-12, 16, 20);
+    ctx.fillStyle = darkColor;
+    ctx.fillRect(x-8, y-12, 16, 3);
+    ctx.fillStyle = shadeColor(color, -10);
+    ctx.fillRect(x-1, y-9, 2, 14);
+    ctx.fillStyle = '#2c3e50'; ctx.fillRect(x-8, y+5, 16, 3);
+  } else if (d === 1 || d === 2) {
+    // SIDE VIEW
+    ctx.fillStyle = color;
+    ctx.fillRect(x-5, y-12, 10, 20);
+    ctx.fillStyle = darkColor;
+    ctx.fillRect(x-5, y-12, 10, 3);
+    ctx.fillStyle = shadeColor(color, 15);
+    ctx.fillRect(d===2?x-5:x+2, y-10, 3, 4);
+    ctx.fillStyle = '#2c3e50'; ctx.fillRect(x-5, y+5, 10, 3);
+    ctx.fillStyle = '#f1c40f'; ctx.fillRect(x-2, y+5, 4, 3);
+  } else {
+    // FRONT VIEW (down)
+    ctx.fillStyle = color;
+    ctx.fillRect(x-8, y-12, 16, 20);
+    ctx.fillStyle = darkColor;
+    ctx.fillRect(x-8, y-12, 16, 3);
+    ctx.fillStyle = shadeColor(color, 15);
+    ctx.fillRect(x-3, y-12, 6, 5);
+    ctx.fillStyle = '#2c3e50'; ctx.fillRect(x-8, y+5, 16, 3);
+    ctx.fillStyle = '#f1c40f'; ctx.fillRect(x-2, y+5, 4, 3);
+  }
 
   // arms with hands
-  const skinColor = '#f5cba7';
-  if (punching) {
-    if (p.dir === 2) {
+  if (d === 3) {
+    // back view arms
+    if (punching) {
       ctx.fillStyle = color; ctx.fillRect(x-11, y-9, 4, 15);
       ctx.fillStyle = skinColor; ctx.fillRect(x-11, y+4, 4, 4);
-      ctx.fillStyle = color; ctx.fillRect(x+7, y-9, 4+reach, 8);
-      ctx.fillStyle = skinColor; ctx.fillRect(x+9+reach, y-7, 6, 6);
-    } else if (p.dir === 1) {
-      ctx.fillStyle = color; ctx.fillRect(x+7, y-9, 4, 15);
-      ctx.fillStyle = skinColor; ctx.fillRect(x+7, y+4, 4, 4);
-      ctx.fillStyle = color; ctx.fillRect(x-11-reach, y-9, 4+reach, 8);
-      ctx.fillStyle = skinColor; ctx.fillRect(x-15-reach, y-7, 6, 6);
-    } else if (p.dir === 0) {
+      ctx.fillStyle = color; ctx.fillRect(x+7, y-9-reach, 4, 8+reach);
+      ctx.fillStyle = skinColor; ctx.fillRect(x+6, y-13-reach, 6, 6);
+    } else if (walking) {
+      const as = Math.sin(frame*Math.PI/2)*4;
+      ctx.fillStyle = color;
+      ctx.fillRect(x-11, y-9+as, 4, 15); ctx.fillRect(x+7, y-9-as, 4, 15);
+      ctx.fillStyle = skinColor;
+      ctx.fillRect(x-11, y+4+as, 4, 4); ctx.fillRect(x+7, y+4-as, 4, 4);
+    } else {
+      ctx.fillStyle = color;
+      ctx.fillRect(x-11, y-9, 4, 15); ctx.fillRect(x+7, y-9, 4, 15);
+      ctx.fillStyle = skinColor;
+      ctx.fillRect(x-11, y+4, 4, 4); ctx.fillRect(x+7, y+4, 4, 4);
+    }
+  } else if (d === 1) {
+    // left side: one arm visible
+    if (punching) {
+      ctx.fillStyle = color; ctx.fillRect(x-8-reach, y-9, 4+reach, 8);
+      ctx.fillStyle = skinColor; ctx.fillRect(x-12-reach, y-7, 6, 6);
+    } else if (walking) {
+      const as = Math.sin(frame*Math.PI/2)*4;
+      ctx.fillStyle = color; ctx.fillRect(x-2, y-9+as, 4, 15);
+      ctx.fillStyle = skinColor; ctx.fillRect(x-2, y+4+as, 4, 4);
+    } else {
+      ctx.fillStyle = color; ctx.fillRect(x-2, y-9, 4, 15);
+      ctx.fillStyle = skinColor; ctx.fillRect(x-2, y+4, 4, 4);
+    }
+  } else if (d === 2) {
+    // right side: one arm visible
+    if (punching) {
+      ctx.fillStyle = color; ctx.fillRect(x+4, y-9, 4+reach, 8);
+      ctx.fillStyle = skinColor; ctx.fillRect(x+6+reach, y-7, 6, 6);
+    } else if (walking) {
+      const as = Math.sin(frame*Math.PI/2)*4;
+      ctx.fillStyle = color; ctx.fillRect(x-2, y-9-as, 4, 15);
+      ctx.fillStyle = skinColor; ctx.fillRect(x-2, y+4-as, 4, 4);
+    } else {
+      ctx.fillStyle = color; ctx.fillRect(x-2, y-9, 4, 15);
+      ctx.fillStyle = skinColor; ctx.fillRect(x-2, y+4, 4, 4);
+    }
+  } else {
+    // front view
+    if (punching) {
       ctx.fillStyle = color; ctx.fillRect(x-11, y-9, 4, 15);
       ctx.fillStyle = skinColor; ctx.fillRect(x-11, y+4, 4, 4);
       ctx.fillStyle = color; ctx.fillRect(x+7, y-9, 4, 8+reach);
       ctx.fillStyle = skinColor; ctx.fillRect(x+6, y-1+reach, 6, 6);
+    } else if (walking) {
+      const as = Math.sin(frame*Math.PI/2)*4;
+      ctx.fillStyle = color;
+      ctx.fillRect(x-11, y-9+as, 4, 15); ctx.fillRect(x+7, y-9-as, 4, 15);
+      ctx.fillStyle = skinColor;
+      ctx.fillRect(x-11, y+4+as, 4, 4); ctx.fillRect(x+7, y+4-as, 4, 4);
     } else {
-      ctx.fillStyle = color; ctx.fillRect(x+7, y-9, 4, 15);
-      ctx.fillStyle = skinColor; ctx.fillRect(x+7, y+4, 4, 4);
-      ctx.fillStyle = color; ctx.fillRect(x-11, y-9-reach, 4, 8+reach);
-      ctx.fillStyle = skinColor; ctx.fillRect(x-13, y-13-reach, 6, 6);
+      ctx.fillStyle = color;
+      ctx.fillRect(x-11, y-9, 4, 15); ctx.fillRect(x+7, y-9, 4, 15);
+      ctx.fillStyle = skinColor;
+      ctx.fillRect(x-11, y+4, 4, 4); ctx.fillRect(x+7, y+4, 4, 4);
     }
-  } else if (walking) {
-    const as = Math.sin(frame*Math.PI/2)*4;
-    ctx.fillStyle = color;
-    ctx.fillRect(x-11, y-9+as, 4, 15); ctx.fillRect(x+7, y-9-as, 4, 15);
-    ctx.fillStyle = skinColor;
-    ctx.fillRect(x-11, y+4+as, 4, 4); ctx.fillRect(x+7, y+4-as, 4, 4);
-  } else {
-    ctx.fillStyle = color;
-    ctx.fillRect(x-11, y-9, 4, 15); ctx.fillRect(x+7, y-9, 4, 15);
-    ctx.fillStyle = skinColor;
-    ctx.fillRect(x-11, y+4, 4, 4); ctx.fillRect(x+7, y+4, 4, 4);
   }
 
   // head
   const avatarImg = isMe ? myAvatarImg : (p._pid && remoteAvatarImgs[p._pid]);
-  if (avatarImg && avatarImg.complete && avatarImg.naturalWidth > 0) {
+  const chosenAv = isMe ? myChosenAvatar : (p.chosenAvatar || null);
+  if (chosenAv) {
+    ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(chosenAv, x, y-18);
+  } else if (avatarImg && avatarImg.complete && avatarImg.naturalWidth > 0) {
     ctx.save();
     ctx.beginPath(); ctx.arc(x, y-17, 11, 0, Math.PI*2); ctx.closePath(); ctx.clip();
     ctx.drawImage(avatarImg, x-11, y-28, 22, 22);
     ctx.restore();
     ctx.strokeStyle = color; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(x, y-17, 11, 0, Math.PI*2); ctx.stroke();
+  } else if (d === 3) {
+    // BACK of head
+    ctx.fillStyle = '#4a3728';
+    ctx.fillRect(x-7, y-24, 14, 13);
+    ctx.fillStyle = '#3d2e1f';
+    ctx.fillRect(x-8, y-26, 16, 6);
+    ctx.fillRect(x-8, y-26, 3, 10);
+    ctx.fillRect(x+5, y-26, 3, 10);
+    ctx.fillStyle = skinColor;
+    ctx.fillRect(x-4, y-14, 8, 3);
+    ctx.fillStyle = '#e8b98a';
+    ctx.fillRect(x-9, y-20, 3, 4);
+    ctx.fillRect(x+6, y-20, 3, 4);
+  } else if (d === 1) {
+    // LEFT side of head
+    ctx.fillStyle = skinColor;
+    ctx.fillRect(x-5, y-24, 10, 13);
+    ctx.fillStyle = '#4a3728';
+    ctx.fillRect(x-6, y-26, 12, 5);
+    ctx.fillRect(x+2, y-26, 4, 8);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x-4, y-19, 4, 4);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(x-4, y-18, 2, 3);
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(x-3, y-14, 3, 2);
+    ctx.fillStyle = '#e8b98a';
+    ctx.fillRect(x-7, y-20, 3, 4);
+  } else if (d === 2) {
+    // RIGHT side of head
+    ctx.fillStyle = skinColor;
+    ctx.fillRect(x-5, y-24, 10, 13);
+    ctx.fillStyle = '#4a3728';
+    ctx.fillRect(x-6, y-26, 12, 5);
+    ctx.fillRect(x-6, y-26, 4, 8);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x, y-19, 4, 4);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(x+2, y-18, 2, 3);
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(x, y-14, 3, 2);
+    ctx.fillStyle = '#e8b98a';
+    ctx.fillRect(x+4, y-20, 3, 4);
   } else {
-    // detailed pixel head
+    // FRONT face (down)
     ctx.fillStyle = skinColor;
     ctx.fillRect(x-7, y-24, 14, 13);
-    // hair
     ctx.fillStyle = '#4a3728';
     ctx.fillRect(x-8, y-26, 16, 5);
     ctx.fillRect(x-8, y-26, 3, 8);
     ctx.fillRect(x+5, y-26, 3, 8);
-    // eyes
     ctx.fillStyle = '#fff';
-    if (p.dir === 0 || p.dir === 3) {
-      ctx.fillRect(x-5, y-19, 4, 4); ctx.fillRect(x+1, y-19, 4, 4);
-      ctx.fillStyle = '#333';
-      ctx.fillRect(x-4, y-18, 2, 3); ctx.fillRect(x+2, y-18, 2, 3);
-      // mouth
-      ctx.fillStyle = '#c0392b';
-      ctx.fillRect(x-2, y-14, 4, 2);
-    } else if (p.dir === 1) {
-      ctx.fillRect(x-6, y-19, 4, 4);
-      ctx.fillStyle = '#333';
-      ctx.fillRect(x-6, y-18, 2, 3);
-      ctx.fillStyle = '#c0392b';
-      ctx.fillRect(x-4, y-14, 3, 2);
-    } else {
-      ctx.fillRect(x+2, y-19, 4, 4);
-      ctx.fillStyle = '#333';
-      ctx.fillRect(x+4, y-18, 2, 3);
-      ctx.fillStyle = '#c0392b';
-      ctx.fillRect(x+1, y-14, 3, 2);
-    }
-    // ear
+    ctx.fillRect(x-5, y-19, 4, 4); ctx.fillRect(x+1, y-19, 4, 4);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(x-4, y-18, 2, 3); ctx.fillRect(x+2, y-18, 2, 3);
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(x-2, y-14, 4, 2);
     ctx.fillStyle = '#e8b98a';
-    if (p.dir !== 1) ctx.fillRect(x+6, y-20, 3, 4);
-    if (p.dir !== 2) ctx.fillRect(x-9, y-20, 3, 4);
+    ctx.fillRect(x+6, y-20, 3, 4);
+    ctx.fillRect(x-9, y-20, 3, 4);
   }
 
   drawEquipment(x, y, p.dir, p.equips || (isMe ? myPlayer.equips : []), frame);
@@ -3630,6 +3941,30 @@ function drawVoteBoard() {
   ctx.restore();
 }
 
+// ─── Wardrobe Drawing ───
+function drawWardrobe() {
+  const x = Math.round(wardrobe.x), y = Math.round(wardrobe.y);
+  ctx.save(); ctx.translate(x, y);
+  ctx.fillStyle = '#5D4037'; ctx.fillRect(-20, -30, 40, 50);
+  ctx.fillStyle = '#6D4C41'; ctx.fillRect(-18, -28, 17, 46);
+  ctx.fillStyle = '#6D4C41'; ctx.fillRect(1, -28, 17, 46);
+  ctx.fillStyle = '#4E342E';
+  ctx.fillRect(-1, -28, 2, 46);
+  ctx.fillStyle = '#FFD54F';
+  ctx.fillRect(-4, -4, 3, 6); ctx.fillRect(1, -4, 3, 6);
+  ctx.fillStyle = '#3E2723';
+  ctx.fillRect(-20, -30, 40, 3); ctx.fillRect(-20, 17, 40, 3);
+  ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('👔', -9, -10); ctx.fillText('👗', 9, -10);
+  ctx.fillText('🎩', -9, 10); ctx.fillText('😎', 9, 10);
+  if (isNearWardrobe(myPlayer.x, myPlayer.y)) {
+    ctx.font = '9px sans-serif'; ctx.fillStyle = '#f1c40f'; ctx.textAlign = 'center';
+    ctx.fillText('Press SPACE', 0, 30);
+    ctx.fillText('to change outfit', 0, 40);
+  }
+  ctx.restore();
+}
+
 // ─── Boss HP Bar ───
 function drawBossHpBar() {
   const x = boss.x - 40, y = boss.y - 90;
@@ -3708,6 +4043,7 @@ function draw() {
   drawables.push({ type:'boss', y: boss.y });
   drawables.push({ type:'rps', y: rpsTable.y });
   drawables.push({ type:'vote', y: voteBoard.y });
+  drawables.push({ type:'wardrobe', y: wardrobe.y });
   drawables.sort((a,b) => a.y - b.y);
 
   for (const d of drawables) {
@@ -3717,6 +4053,7 @@ function draw() {
     else if (d.type === 'boss') { if (!bossDead) drawBoss(); else drawBossGrave(); }
     else if (d.type === 'rps') drawRPSTable();
     else if (d.type === 'vote') drawVoteBoard();
+    else if (d.type === 'wardrobe') drawWardrobe();
     else drawCharacter(d.p, d.p._isMe);
   }
   drawAttackEffects();
