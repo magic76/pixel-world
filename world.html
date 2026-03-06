@@ -1359,7 +1359,7 @@ const myPlayer = {
   hp: MAX_HP, ghostUntil: 0,
   carId: -1,
   equips: [],
-  title: '', sitting: false,
+  title: '', sitting: false, bigUntil: 0,
 };
 
 const remotePlayers = {};
@@ -1912,6 +1912,9 @@ function handleData(fromId, data) {
       bossName = data.name;
       notify('Boss is now named: ' + bossName);
       break;
+    case 'player_big':
+      if (remotePlayers[fromId]) remotePlayers[fromId].bigUntil = data.until;
+      break;
   }
 }
 
@@ -2135,8 +2138,10 @@ function openChest(chest) {
     notify('🎁 Got ' + eq.name + '!');
     addChestEffect(chest.x, chest.y);
   }
+  myPlayer.bigUntil = Date.now() + 10000;
   broadcast({ type: 'chest_open', chestId: chest.id, equipId: chest.equipId });
   broadcast({ type: 'equip_sync', equips: myPlayer.equips });
+  broadcast({ type: 'player_big', until: myPlayer.bigUntil });
 }
 
 const chestEffects = [];
@@ -3534,6 +3539,12 @@ function drawCharacter(p, isMe) {
   }
 
   ctx.save();
+  const isBig = (p.bigUntil || 0) > now;
+  if (isBig) {
+    ctx.translate(x, y);
+    ctx.scale(2, 2);
+    ctx.translate(-x, -y);
+  }
   if (ghost) ctx.globalAlpha = Math.sin(now/100)*0.15+0.3;
 
   // shadow
@@ -3681,19 +3692,23 @@ function drawCharacter(p, isMe) {
     }
   }
 
-  // head
+  // head - offset based on direction + walking bob
+  const walkBob = walking ? Math.sin(frame * Math.PI / 2) * 1.5 : 0;
+  const headOx = d === 1 ? -2 : d === 2 ? 2 : 0;
+  const headOy = (d === 3 ? 1 : 0) - walkBob;
+  const hx = x + headOx, hy = y + headOy;
   const avatarImg = isMe ? myAvatarImg : (p._pid && remoteAvatarImgs[p._pid]);
   const chosenAv = isMe ? myChosenAvatar : (p.chosenAvatar || null);
   if (chosenAv) {
     ctx.font = '20px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText(chosenAv, x, y-12);
+    ctx.fillText(chosenAv, hx, hy-12);
   } else if (avatarImg && avatarImg.complete && avatarImg.naturalWidth > 0) {
     ctx.save();
-    ctx.beginPath(); ctx.arc(x, y-17, 11, 0, Math.PI*2); ctx.closePath(); ctx.clip();
-    ctx.drawImage(avatarImg, x-11, y-28, 22, 22);
+    ctx.beginPath(); ctx.arc(hx, hy-17, 11, 0, Math.PI*2); ctx.closePath(); ctx.clip();
+    ctx.drawImage(avatarImg, hx-11, hy-28, 22, 22);
     ctx.restore();
     ctx.strokeStyle = color; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(x, y-17, 11, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(hx, hy-17, 11, 0, Math.PI*2); ctx.stroke();
   } else if (d === 3) {
     // BACK of head
     ctx.fillStyle = '#4a3728';
