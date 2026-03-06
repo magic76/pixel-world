@@ -584,6 +584,16 @@ function generateMap(seed) {
     for (let c=midC-2;c<=midC+2;c++)
       if(r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=T.FLOOR;
 
+  // clear area for reset switch (below spawn)
+  for (let r=midR+2;r<=midR+5;r++)
+    for (let c=midC-2;c<=midC+2;c++)
+      if(r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=T.FLOOR;
+
+  // clear area for boss NPC (top center)
+  for (let r=1;r<=5;r++)
+    for (let c=midC-4;c<=midC+4;c++)
+      if(c>0&&c<MAP_COLS-1) map[r][c]=T.FLOOR;
+
   return map;
 }
 
@@ -638,6 +648,222 @@ function generateChests(seed) {
     });
   }
   return result;
+}
+
+// ─── Chest Reset Switch ───
+const resetSwitch = {
+  x: (MAP_COLS / 2 | 0) * TILE + TILE / 2,
+  y: (MAP_ROWS / 2 | 0) * TILE + TILE / 2 + TILE * 3,
+};
+const SWITCH_RANGE = 50;
+
+function isNearSwitch(px, py) {
+  const dx = px - resetSwitch.x, dy = py - resetSwitch.y;
+  return Math.sqrt(dx*dx + dy*dy) < SWITCH_RANGE;
+}
+
+function resetAllChests() {
+  const rng = seededRandom(mapSeed + 999);
+  for (let i = 0; i < chests.length; i++) {
+    chests[i].opened = false;
+    const equipIdx = Math.floor(seededRandom(mapSeed + 999 + Date.now() + i)() * EQUIP_LIST.length);
+    chests[i].equipId = EQUIP_LIST[equipIdx].id;
+  }
+  notify('🔄 All chests have been reset!');
+  broadcast({ type: 'chest_reset', chests });
+}
+
+function drawResetSwitch() {
+  const x = Math.round(resetSwitch.x), y = Math.round(resetSwitch.y);
+  const near = isNearSwitch(myPlayer.x, myPlayer.y);
+  const t = Date.now() * 0.003;
+  ctx.save();
+  ctx.translate(x, y);
+
+  // base plate
+  ctx.fillStyle = '#34495e';
+  ctx.fillRect(-16, -10, 32, 24);
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(-14, -8, 28, 20);
+
+  // lever slot
+  ctx.fillStyle = '#1a252f';
+  ctx.fillRect(-3, -6, 6, 16);
+
+  // lever handle
+  const glow = near ? 0.6 + 0.4 * Math.sin(t * 3) : 0.3;
+  ctx.fillStyle = near ? `rgba(231,76,60,${glow})` : '#e74c3c';
+  ctx.fillRect(-5, -14, 10, 10);
+  ctx.fillStyle = '#c0392b';
+  ctx.fillRect(-3, -6, 6, 4);
+
+  // warning stripes
+  ctx.fillStyle = '#f39c12';
+  ctx.fillRect(-16, -10, 4, 2);
+  ctx.fillRect(12, -10, 4, 2);
+  ctx.fillRect(-16, 12, 4, 2);
+  ctx.fillRect(12, 12, 4, 2);
+
+  ctx.restore();
+
+  if (near) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Press SPACE to reset chests', x, y - 22);
+  }
+}
+
+// ─── Boss NPC ───
+const BOSS_RANGE = 5 * TILE;
+const boss = {
+  x: (MAP_COLS / 2 | 0) * TILE + TILE / 2,
+  y: 3 * TILE + TILE / 2,
+  angry: false, angryUntil: 0,
+  lastYell: 0,
+};
+const BOSS_YELLS = [
+  '😡 Who told you to slack off!?',
+  '🔥 Get back to work NOW!',
+  '💢 Deadline is TOMORROW!!',
+  '😤 You think this is a game!?',
+  '🤬 I want the report on my desk!',
+  '😠 No lunch break today!',
+  '💥 You\'re all FIRED... maybe!',
+  '👊 Stop playing around!!',
+];
+
+function isNearBoss(px, py) {
+  const dx = px - boss.x, dy = py - boss.y;
+  return Math.sqrt(dx*dx + dy*dy) < BOSS_RANGE;
+}
+
+function drawBoss() {
+  const x = Math.round(boss.x), y = Math.round(boss.y);
+  const now = Date.now();
+  const anyNear = isNearBoss(myPlayer.x, myPlayer.y) ||
+    Object.values(remotePlayers).some(rp => isNearBoss(rp.x, rp.y));
+  boss.angry = anyNear;
+  if (anyNear) boss.angryUntil = now + 2000;
+  const isAngry = now < boss.angryUntil;
+
+  ctx.save();
+  ctx.translate(x, y);
+  const scale = 4;
+
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath(); ctx.ellipse(0, 15*scale, 12*scale, 5*scale, 0, 0, Math.PI*2); ctx.fill();
+
+  // body (suit)
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(-6*scale, -2*scale, 12*scale, 16*scale);
+
+  // tie
+  ctx.fillStyle = '#e74c3c';
+  ctx.fillRect(-1*scale, -1*scale, 2*scale, 8*scale);
+
+  // legs
+  ctx.fillStyle = '#1a252f';
+  const walk = isAngry ? Math.sin(now * 0.008) * 2 : 0;
+  ctx.fillRect(-5*scale, 12*scale + walk, 4*scale, 6*scale);
+  ctx.fillRect(1*scale, 12*scale - walk, 4*scale, 6*scale);
+
+  // arms
+  const armSwing = isAngry ? Math.sin(now * 0.012) * 15 : 0;
+  ctx.save();
+  ctx.translate(-7*scale, 0);
+  ctx.rotate(armSwing * Math.PI / 180);
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(-1*scale, 0, 3*scale, 10*scale);
+  ctx.fillStyle = '#f5cba7';
+  ctx.fillRect(-1*scale, 8*scale, 3*scale, 3*scale);
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(7*scale, 0);
+  ctx.rotate(-armSwing * Math.PI / 180);
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(-2*scale, 0, 3*scale, 10*scale);
+  ctx.fillStyle = '#f5cba7';
+  ctx.fillRect(-2*scale, 8*scale, 3*scale, 3*scale);
+  ctx.restore();
+
+  // head
+  const headShake = isAngry ? Math.sin(now * 0.015) * 3 : 0;
+  ctx.save();
+  ctx.translate(headShake, 0);
+  ctx.fillStyle = '#f5cba7';
+  ctx.fillRect(-5*scale, -12*scale, 10*scale, 11*scale);
+
+  // hair (balding)
+  ctx.fillStyle = '#5d4e37';
+  ctx.fillRect(-5*scale, -12*scale, 10*scale, 3*scale);
+  ctx.fillRect(-5*scale, -12*scale, 2*scale, 5*scale);
+  ctx.fillRect(3*scale, -12*scale, 2*scale, 5*scale);
+
+  // eyes
+  if (isAngry) {
+    // angry eyebrows
+    ctx.fillStyle = '#333';
+    ctx.save(); ctx.translate(-3*scale, -7*scale); ctx.rotate(-0.3);
+    ctx.fillRect(0, 0, 3*scale, 1*scale); ctx.restore();
+    ctx.save(); ctx.translate(1*scale, -8*scale); ctx.rotate(0.3);
+    ctx.fillRect(0, 0, 3*scale, 1*scale); ctx.restore();
+    // angry eyes
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(-4*scale, -7*scale, 2*scale, 2*scale);
+    ctx.fillRect(2*scale, -7*scale, 2*scale, 2*scale);
+    // mouth
+    ctx.fillStyle = '#333';
+    ctx.fillRect(-3*scale, -3*scale, 6*scale, 2*scale);
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(-2*scale, -3*scale, 4*scale, 1*scale);
+  } else {
+    ctx.fillStyle = '#333';
+    ctx.fillRect(-4*scale, -7*scale, 2*scale, 2*scale);
+    ctx.fillRect(2*scale, -7*scale, 2*scale, 2*scale);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(-2*scale, -3*scale, 4*scale, 1*scale);
+  }
+  ctx.restore();
+
+  ctx.restore();
+
+  // name tag
+  ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillStyle = '#e74c3c';
+  ctx.fillText('👔 Boss', x, y - 14*scale - 8);
+
+  // angry speech bubble
+  if (isAngry && now - boss.lastYell > 3000) {
+    boss.lastYell = now;
+    boss.yellText = BOSS_YELLS[Math.floor(Math.random() * BOSS_YELLS.length)];
+  }
+  if (isAngry && boss.yellText) {
+    const elapsed = (now - boss.lastYell) / 3000;
+    const alpha = elapsed < 0.1 ? elapsed / 0.1 : elapsed > 0.7 ? (1-elapsed)/0.3 : 1;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.font = 'bold 14px sans-serif';
+    const tw = ctx.measureText(boss.yellText).width;
+    const bw = tw + 24, bh = 32;
+    const bx = x - bw/2, by = y - 14*scale - 46;
+    ctx.fillStyle = '#fff';
+    const r = 10;
+    ctx.beginPath();
+    ctx.moveTo(bx+r, by); ctx.lineTo(bx+bw-r, by);
+    ctx.quadraticCurveTo(bx+bw, by, bx+bw, by+r); ctx.lineTo(bx+bw, by+bh-r);
+    ctx.quadraticCurveTo(bx+bw, by+bh, bx+bw-r, by+bh); ctx.lineTo(bx+r, by+bh);
+    ctx.quadraticCurveTo(bx, by+bh, bx, by+bh-r); ctx.lineTo(bx, by+r);
+    ctx.quadraticCurveTo(bx, by, bx+r, by);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x-5, by+bh); ctx.lineTo(x, by+bh+8); ctx.lineTo(x+5, by+bh);
+    ctx.fillStyle='#fff'; ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#c0392b'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(boss.yellText, x, by + bh/2);
+    ctx.restore();
+  }
 }
 
 // ─── Whiteboard ───
@@ -1243,6 +1469,15 @@ function handleData(fromId, data) {
         cars[data.carId].x = data.x; cars[data.carId].y = data.y; cars[data.carId].dir = data.dir;
       }
       break;
+    case 'chest_reset':
+      if (data.chests) {
+        for (let i = 0; i < data.chests.length && i < chests.length; i++) {
+          chests[i].opened = data.chests[i].opened;
+          chests[i].equipId = data.chests[i].equipId;
+        }
+        notify('🔄 Chests have been reset!');
+      }
+      break;
     case 'chest_open':
       if (data.chestId >= 0 && data.chestId < chests.length) {
         chests[data.chestId].opened = true;
@@ -1356,6 +1591,13 @@ function performAttack() {
   if (isNearWhiteboard(myPlayer.x, myPlayer.y)) {
     lastAttackTime = now;
     openWhiteboardInput();
+    return;
+  }
+
+  // check if near chest reset switch
+  if (isNearSwitch(myPlayer.x, myPlayer.y)) {
+    lastAttackTime = now;
+    resetAllChests();
     return;
   }
 
@@ -1537,7 +1779,7 @@ document.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; key
 
 // ─── Mobile Touch Controls ───
 (function initMobileControls() {
-  const dirMap = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' };
+  const dirMap = { up: 'arrowup', down: 'arrowdown', left: 'arrowleft', right: 'arrowright' };
   const dpadBtns = document.querySelectorAll('.dpad-btn');
   const activeTouches = {};
 
@@ -2502,11 +2744,15 @@ function draw() {
   for (const car of cars) drawables.push({ type:'car', y: car.y, car });
   for (const chest of chests) drawables.push({ type:'chest', y: chest.y, chest });
   for (const p of all) drawables.push({ type:'player', y: p.y, p });
+  drawables.push({ type:'switch', y: resetSwitch.y });
+  drawables.push({ type:'boss', y: boss.y });
   drawables.sort((a,b) => a.y - b.y);
 
   for (const d of drawables) {
     if (d.type === 'car') drawCar(d.car);
     else if (d.type === 'chest') drawChest(d.chest);
+    else if (d.type === 'switch') drawResetSwitch();
+    else if (d.type === 'boss') drawBoss();
     else drawCharacter(d.p, d.p._isMe);
   }
   drawAttackEffects();
