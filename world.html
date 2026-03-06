@@ -411,170 +411,158 @@ function generateMap(seed) {
   for (let c = 3; c < MAP_COLS-3; c += 4) { map[0][c] = T.WINDOW; map[MAP_ROWS-1][c] = T.WINDOW; }
   for (let r = 3; r < MAP_ROWS-3; r += 4) { map[r][0] = T.WINDOW; map[r][MAP_COLS-1] = T.WINDOW; }
 
-  function fill(r1,c1,r2,c2,t) {
-    for (let r=Math.max(1,r1);r<=Math.min(MAP_ROWS-2,r2);r++)
-      for (let c=Math.max(1,c1);c<=Math.min(MAP_COLS-2,c2);c++) map[r][c]=t;
+  function fillRect(r1,c1,r2,c2,t) {
+    for (let r=r1;r<=r2;r++) for (let c=c1;c<=c2;c++)
+      if (r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=t;
   }
-  function walls(r1,c1,r2,c2) {
-    for (let c=c1;c<=c2;c++) { if(r1>0) map[r1][c]=T.WALL; if(r2<MAP_ROWS-1) map[r2][c]=T.WALL; }
-    for (let r=r1;r<=r2;r++) { if(c1>0) map[r][c1]=T.WALL; if(c2<MAP_COLS-1) map[r][c2]=T.WALL; }
+  function drawWallRect(r1,c1,r2,c2) {
+    for (let c=c1;c<=c2;c++) { map[r1][c]=T.WALL; map[r2][c]=T.WALL; }
+    for (let r=r1;r<=r2;r++) { map[r][c1]=T.WALL; map[r][c2]=T.WALL; }
   }
-  function door(r,c) { if(r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=T.DOOR; }
-  function clearAround(r,c,ft) {
-    for (const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]])
-      if (map[r+dr]?.[c+dc]===ft || map[r+dr]?.[c+dc]===T.DESK || map[r+dr]?.[c+dc]===T.MONITOR || map[r+dr]?.[c+dc]===T.TABLE)
-        map[r+dr][c+dc] = ft;
-  }
+  function addDoor(r,c) { if (r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=T.DOOR; }
 
-  // ── Corridors: a grid of 3-wide halls ──
+  // ── Main corridors (horizontal + vertical cross) ──
   const midR = MAP_ROWS/2|0, midC = MAP_COLS/2|0;
-  // horizontal corridors at rows: 1, ~19, ~38, ~57, ~74
-  const hCorrs = [1, 19, midR, MAP_ROWS - 20, MAP_ROWS - 2];
-  // vertical corridors at cols: 1, ~20, ~50, ~80, ~99
-  const vCorrs = [1, 19, midC, MAP_COLS - 20, MAP_COLS - 2];
+  // horizontal main corridor
+  for (let c = 1; c < MAP_COLS-1; c++) { map[midR-1][c]=T.CORRIDOR; map[midR][c]=T.CORRIDOR; map[midR+1][c]=T.CORRIDOR; }
+  // vertical main corridor
+  for (let r = 1; r < MAP_ROWS-1; r++) { map[r][midC-1]=T.CORRIDOR; map[r][midC]=T.CORRIDOR; map[r][midC+1]=T.CORRIDOR; }
 
-  for (const hr of hCorrs)
-    for (let d = -1; d <= 1; d++)
-      for (let c = 1; c < MAP_COLS-1; c++)
-        if (hr+d > 0 && hr+d < MAP_ROWS-1) map[hr+d][c] = T.CORRIDOR;
+  // secondary horizontal corridors
+  const hCorr1 = 12, hCorr2 = MAP_ROWS - 13;
+  for (let c = 1; c < MAP_COLS-1; c++) { map[hCorr1][c]=T.CORRIDOR; map[hCorr1+1][c]=T.CORRIDOR; map[hCorr2][c]=T.CORRIDOR; map[hCorr2+1][c]=T.CORRIDOR; }
+  // secondary vertical corridors
+  const vCorr1 = 20, vCorr2 = MAP_COLS - 21;
+  for (let r = 1; r < MAP_ROWS-1; r++) { map[r][vCorr1]=T.CORRIDOR; map[r][vCorr1+1]=T.CORRIDOR; map[r][vCorr2]=T.CORRIDOR; map[r][vCorr2+1]=T.CORRIDOR; }
 
-  for (const vc of vCorrs)
-    for (let d = -1; d <= 1; d++)
-      for (let r = 1; r < MAP_ROWS-1; r++)
-        if (vc+d > 0 && vc+d < MAP_COLS-1) map[r][vc+d] = T.CORRIDOR;
-
-  // ── Room builder with 4 doors ──
+  // ── Helper: create a room with walls, floor, door, and label ──
   let roomNum = 1;
   function makeRoom(r1, c1, rh, cw, type) {
-    if (rh < 5 || cw < 5) return; // minimum viable room
     const r2 = r1+rh-1, c2 = c1+cw-1;
     if (r2 >= MAP_ROWS-1 || c2 >= MAP_COLS-1 || r1 <= 0 || c1 <= 0) return;
+    const floorType = type === 'meeting' ? T.CARPET : type === 'pantry' ? T.PANTRY_FLOOR : T.FLOOR;
+    fillRect(r1, c1, r2, c2, floorType);
+    drawWallRect(r1, c1, r2, c2);
+    fillRect(r1+1, c1+1, r2-1, c2-1, floorType);
 
-    const ft = type==='meeting' ? T.CARPET : type==='pantry' ? T.PANTRY_FLOOR : T.FLOOR;
-    // fill entire room area with floor, then draw walls, then re-fill interior
-    fill(r1, c1, r2, c2, ft);
-    walls(r1, c1, r2, c2);
-    fill(r1+1, c1+1, r2-1, c2-1, ft);
+    // door on a reachable side
+    const sides = [];
+    // check which sides are adjacent to corridors
+    for (let c = c1+1; c < c2; c++) { if (map[r1-1]?.[c]===T.CORRIDOR) sides.push({r:r1,c}); if (map[r2+1]?.[c]===T.CORRIDOR) sides.push({r:r2,c}); }
+    for (let r = r1+1; r < r2; r++) { if (map[r]?.[c1-1]===T.CORRIDOR) sides.push({r,c:c1}); if (map[r]?.[c2+1]===T.CORRIDOR) sides.push({r,c:c2}); }
+    if (sides.length > 0) {
+      const d = sides[Math.floor(rng() * sides.length)];
+      addDoor(d.r, d.c);
+    } else {
+      addDoor(r2, c1 + Math.floor(cw/2));
+    }
 
-    // 4 doors: one on each side, centered
-    const doorTop = { r: r1, c: c1 + Math.floor(cw/2) };
-    const doorBot = { r: r2, c: c1 + Math.floor(cw/2) };
-    const doorLeft = { r: r1 + Math.floor(rh/2), c: c1 };
-    const doorRight = { r: r1 + Math.floor(rh/2), c: c2 };
-    door(doorTop.r, doorTop.c);
-    door(doorBot.r, doorBot.c);
-    door(doorLeft.r, doorLeft.c);
-    door(doorRight.r, doorRight.c);
+    const label = type === 'meeting' ? 'MTG' : type === 'pantry' ? 'Pantry' : String(roomNum++);
+    roomLabels.push({ x: (c1 + c2) / 2 * TILE + TILE/2, y: r1 * TILE + TILE/2, label, type });
 
-    // also ensure tile next to door inside is floor (not furniture)
-    const doorCells = [doorTop, doorBot, doorLeft, doorRight];
-
-    // label
-    const label = type==='meeting' ? 'MTG' : type==='pantry' ? 'Pantry' : String(roomNum++);
-    roomLabels.push({ x: (c1+c2)/2*TILE+TILE/2, y: r1*TILE+TILE/2, label, type });
-
-    // furnish
+    // furnish based on type
     if (type === 'office') {
-      for (let r = r1+2; r < r2-1; r += 3)
+      for (let r = r1+2; r < r2-1; r += 3) {
         for (let c = c1+2; c < c2-2; c += 4) {
-          if (map[r][c]===ft) { map[r][c]=T.DESK; if(c+1<c2-1 && map[r][c+1]===ft) map[r][c+1]=T.MONITOR; }
-          if (r+1<r2-1 && map[r+1][c]===ft) map[r+1][c]=T.CHAIR;
+          if (map[r][c] === floorType) { map[r][c] = T.DESK; if (c+1<c2) map[r][c+1] = T.MONITOR; }
+          if (r+1 < r2 && map[r+1][c] === floorType) map[r+1][c] = T.CHAIR;
         }
+      }
     } else if (type === 'meeting') {
-      const tr = r1+Math.floor(rh/2)-1;
-      for (let c=c1+2;c<=c2-2;c++) { if(map[tr][c]===ft) map[tr][c]=T.TABLE; if(tr+1<=r2-1&&map[tr+1][c]===ft) map[tr+1][c]=T.TABLE; }
-      for (let c=c1+2;c<=c2-2;c+=2) {
-        if(tr-1>r1 && map[tr-1][c]===ft) map[tr-1][c]=T.CHAIR;
-        if(tr+2<r2 && map[tr+2][c]===ft) map[tr+2][c]=T.CHAIR;
+      const tr1 = r1 + Math.floor(rh/2) - 1, tc1 = c1 + 2, tc2 = c2 - 2;
+      for (let c = tc1; c <= tc2; c++) if (map[tr1][c]===floorType) map[tr1][c] = T.TABLE;
+      if (map[tr1+1]) for (let c = tc1; c <= tc2; c++) if (map[tr1+1][c]===floorType) map[tr1+1][c] = T.TABLE;
+      // chairs around table
+      for (let c = tc1; c <= tc2; c += 2) {
+        if (tr1-1>r1 && map[tr1-1][c]===floorType) map[tr1-1][c] = T.CHAIR;
+        if (tr1+2<r2 && map[tr1+2][c]===floorType) map[tr1+2][c] = T.CHAIR;
       }
-      if(map[r1+1]?.[c2-1]===ft) map[r1+1][c2-1]=T.WHITEBOARD;
+      // whiteboard
+      if (map[r1+1][c2-1]===floorType) map[r1+1][c2-1] = T.WHITEBOARD;
     } else if (type === 'pantry') {
-      for (let c=c1+1;c<c2;c++) if(map[r1+1][c]===ft) map[r1+1][c]=T.COUNTER;
-      if(map[r1+1][c1+1]===T.COUNTER) map[r1+1][c1+1]=T.FRIDGE;
-      if(map[r1+1][c2-1]===T.COUNTER) map[r1+1][c2-1]=T.COFFEE;
-      const tr = r1+Math.floor(rh/2)+1;
-      for (let c=c1+2;c<c2-1;c+=3) {
-        if(tr<r2 && map[tr][c]===ft) map[tr][c]=T.TABLE;
-        if(tr-1>r1+1 && map[tr-1][c]===ft) map[tr-1][c]=T.CHAIR;
-        if(tr+1<r2 && map[tr+1][c]===ft) map[tr+1][c]=T.CHAIR;
+      // counters along one wall
+      for (let c = c1+1; c < c2; c++) if (map[r1+1][c]===floorType) map[r1+1][c] = T.COUNTER;
+      if (map[r1+1][c1+1]===T.COUNTER) map[r1+1][c1+1] = T.FRIDGE;
+      if (map[r1+1][c2-1]===T.COUNTER) map[r1+1][c2-1] = T.COFFEE;
+      // tables & chairs
+      const tr = r1 + Math.floor(rh/2)+1;
+      for (let c = c1+2; c < c2-1; c += 3) {
+        if (tr < r2 && map[tr][c]===floorType) map[tr][c] = T.TABLE;
+        if (tr-1>r1+1 && map[tr-1][c]===floorType) map[tr-1][c] = T.CHAIR;
+        if (tr+1<r2 && map[tr+1][c]===floorType) map[tr+1][c] = T.CHAIR;
       }
-      if(r2-2>r1+1 && map[r2-2][c1+1]===ft) map[r2-2][c1+1]=T.SOFA;
+      // sofa
+      if (r2-2>r1+1 && map[r2-2][c1+1]===floorType) map[r2-2][c1+1] = T.SOFA;
     } else {
-      // small room: desk + monitor + chair in a corner away from doors
-      const dr = r1+1, dc = c2-1;
-      if(dr<r2 && dc>c1 && map[dr][dc]===ft) map[dr][dc]=T.DESK;
-      if(dr<r2 && dc-1>c1 && map[dr][dc-1]===ft) map[dr][dc-1]=T.MONITOR;
-      if(dr+1<r2 && dc>c1 && map[dr+1][dc]===ft) map[dr+1][dc]=T.CHAIR;
-    }
-
-    // clear 1 tile inside each door so nothing blocks entry
-    for (const d of doorCells) {
-      for (const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
-        const nr=d.r+dr, nc=d.c+dc;
-        if(nr>r1&&nr<r2&&nc>c1&&nc<c2 && !WALKABLE.has(map[nr][nc])) map[nr][nc]=ft;
+      // small numbered room: desk + chair
+      if (r1+2<r2 && c1+2<c2) {
+        map[r1+1][c2-1] = T.DESK;
+        if (c2-2>c1) map[r1+1][c2-2] = T.MONITOR;
+        map[r1+2][c2-1] = T.CHAIR;
       }
     }
   }
 
-  // ── Room layout using corridor grid ──
-  // corridor rows: hCorrs = [1, 19, 38, 57, 74] (approx)
-  // corridor cols: vCorrs = [1, 19, 50, 80, 99] (approx)
-  // rooms fit between corridor pairs
-
-  // band definitions: rows between corridors
-  const rowBands = [];
-  for (let i = 0; i < hCorrs.length-1; i++)
-    rowBands.push([hCorrs[i]+2, hCorrs[i+1]-2]);
-
-  const colBands = [];
-  for (let i = 0; i < vCorrs.length-1; i++)
-    colBands.push([vCorrs[i]+2, vCorrs[i+1]-2]);
-
-  // lay out rooms in the grid cells
-  const layout = [
-    // row 0 (top)
-    { rb:0, cb:0, type:'small' }, { rb:0, cb:1, type:'office' },
-    { rb:0, cb:2, type:'small' }, { rb:0, cb:3, type:'small' },
-    // row 1
-    { rb:1, cb:0, type:'small' }, { rb:1, cb:1, type:'meeting' },
-    { rb:1, cb:2, type:'office' }, { rb:1, cb:3, type:'small' },
-    // row 2
-    { rb:2, cb:0, type:'small' }, { rb:2, cb:1, type:'office' },
-    { rb:2, cb:2, type:'meeting' }, { rb:2, cb:3, type:'small' },
-    // row 3 (bottom)
-    { rb:3, cb:0, type:'meeting' }, { rb:3, cb:1, type:'pantry' },
-    { rb:3, cb:2, type:'small' }, { rb:3, cb:3, type:'small' },
-  ];
-
-  // for small type in same band, subdivide into 2 rooms vertically
-  for (const item of layout) {
-    const [r1, r2] = rowBands[item.rb] || [];
-    const [c1, c2] = colBands[item.cb] || [];
-    if (r1 === undefined || c1 === undefined) continue;
-    const rh = r2-r1+1, cw = c2-c1+1;
-
-    if (item.type === 'small' && rh >= 12) {
-      const half = Math.floor(rh/2);
-      makeRoom(r1, c1, half, cw, 'small');
-      makeRoom(r1+half, c1, rh-half, cw, 'small');
-    } else if (item.type === 'small' && cw >= 16) {
-      const half = Math.floor(cw/2);
-      makeRoom(r1, c1, rh, half, 'small');
-      makeRoom(r1, c1+half, rh, cw-half, 'small');
-    } else {
-      makeRoom(r1, c1, rh, cw, item.type);
-    }
+  // ── Top-left quadrant: numbered small rooms ──
+  for (let i = 0; i < 4; i++) {
+    const rr = 2 + i * Math.floor((hCorr1 - 3) / 4);
+    makeRoom(rr, 2, Math.floor((hCorr1 - 3) / 4), 8, 'small');
+    makeRoom(rr, 11, Math.floor((hCorr1 - 3) / 4), 8, 'small');
   }
 
-  // scatter plants in corridors
-  for (let r=2;r<MAP_ROWS-2;r++)
-    for (let c=2;c<MAP_COLS-2;c++)
-      if (map[r][c]===T.CORRIDOR && rng()<0.006) map[r][c]=T.PLANT;
+  // ── Top-right quadrant: more numbered rooms ──
+  for (let i = 0; i < 4; i++) {
+    const rr = 2 + i * Math.floor((hCorr1 - 3) / 4);
+    makeRoom(rr, vCorr2 + 2, Math.floor((hCorr1 - 3) / 4), 8, 'small');
+    makeRoom(rr, MAP_COLS - 10, Math.floor((hCorr1 - 3) / 4), 8, 'small');
+  }
 
-  // clear spawn area
-  for (let r=midR-2;r<=midR+2;r++)
-    for (let c=midC-2;c<=midC+2;c++)
-      if(r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=T.CORRIDOR;
+  // ── Open office areas (top middle) ──
+  makeRoom(2, vCorr1 + 2, hCorr1 - 3, vCorr2 - vCorr1 - 2, 'office');
+
+  // ── Meeting rooms (bottom-left) ──
+  makeRoom(hCorr2 + 2, 2, MAP_ROWS - hCorr2 - 4, 14, 'meeting');
+  makeRoom(hCorr2 + 2, 17, MAP_ROWS - hCorr2 - 4, 14, 'meeting');
+
+  // ── Pantry (bottom-right) ──
+  makeRoom(hCorr2 + 2, vCorr2 + 2, MAP_ROWS - hCorr2 - 4, MAP_COLS - vCorr2 - 4, 'pantry');
+
+  // ── Middle-left: office area ──
+  makeRoom(hCorr1 + 2, 2, midR - hCorr1 - 4, vCorr1 - 3, 'office');
+
+  // ── Middle-right: office area ──
+  makeRoom(hCorr1 + 2, vCorr2 + 2, midR - hCorr1 - 4, MAP_COLS - vCorr2 - 4, 'office');
+
+  // ── Bottom-middle area: more numbered rooms ──
+  for (let i = 0; i < 3; i++) {
+    const roomW = Math.floor((vCorr2 - vCorr1 - 2) / 3);
+    makeRoom(hCorr2 + 2, vCorr1 + 2 + i * roomW, MAP_ROWS - hCorr2 - 4, roomW, 'small');
+  }
+
+  // ── Left side: lower rooms ──
+  makeRoom(midR + 2, 2, hCorr2 - midR - 3, 9, 'small');
+  makeRoom(midR + 2, 12, hCorr2 - midR - 3, 9, 'small');
+
+  // ── Right side: lower rooms ──
+  makeRoom(midR + 2, vCorr2 + 2, hCorr2 - midR - 3, 9, 'small');
+  makeRoom(midR + 2, MAP_COLS - 11, hCorr2 - midR - 3, 9, 'small');
+
+  // ── Center area: large meeting room ──
+  makeRoom(hCorr1 + 2, vCorr1 + 2, midR - hCorr1 - 4, vCorr2 - vCorr1 - 2, 'meeting');
+
+  // ── Lower-center office ──
+  makeRoom(midR + 2, vCorr1 + 2, hCorr2 - midR - 3, vCorr2 - vCorr1 - 2, 'office');
+
+  // ── Scatter plants in corridors ──
+  for (let r = 2; r < MAP_ROWS-2; r++)
+    for (let c = 2; c < MAP_COLS-2; c++)
+      if (map[r][c] === T.CORRIDOR && rng() < 0.008) map[r][c] = T.PLANT;
+
+  // clear spawn (lobby area near center)
+  const spawnR = midR, spawnC = midC;
+  for (let r = spawnR-2; r <= spawnR+2; r++)
+    for (let c = spawnC-2; c <= spawnC+2; c++)
+      if (r>0 && r<MAP_ROWS-1 && c>0 && c<MAP_COLS-1) map[r][c] = T.CORRIDOR;
 
   return map;
 }
@@ -899,7 +887,20 @@ function removeRemoteAudio(pid) {
 
 // ─── PeerJS ───
 function initPeer(customId, hostPeerId) {
-  peer = customId ? new Peer(customId, { debug: 0 }) : new Peer({ debug: 0 });
+  const iceServers = [
+      { urls: 'stun:stun.l.google.com:19302' },         // 免費 STUN
+      {
+        urls: 'turn:preview-1r0ywrjsvu.orba.qa1fdg.net:3478',               // 你的 TURN
+        username: 'myuser',
+        credential: 'mypassword'
+      },
+      {
+        urls: 'turns:preview-1r0ywrjsvu.orba.qa1fdg.net:5349',              // TLS 版本，更不容易被擋
+        username: 'myuser',
+        credential: 'mypassword'
+      }
+    ]
+  peer = customId ? new Peer(customId, { debug: 0, iceServers: iceServers }) : new Peer({ debug: 0, iceServers: iceServers });
 
   peer.on('open', id => {
     myId = id;
