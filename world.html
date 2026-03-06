@@ -225,7 +225,7 @@
     <h3>Players</h3>
     <div id="pl-entries"></div>
   </div>
-  <div id="help-hint">Arrows / WASD to move · Space to attack · Enter to chat · 🎤 voice</div>
+  <div id="help-hint">Arrows / WASD to move · Space to attack · Enter to chat · 🎤 voice · 🎁 find chests!</div>
   <div id="chat-bar">
     <button class="emote-btn" onclick="sendEmote('⭕')" title="O">⭕</button>
     <button class="emote-btn" onclick="sendEmote('❌')" title="X">❌</button>
@@ -369,6 +369,58 @@ function generateMap(seed) {
 }
 
 let MAP = [], mapSeed = 0;
+
+// ─── Equipment Definitions ───
+const EQUIP_LIST = [
+  { id:'crown',    name:'👑 Crown',       slot:'head',  color:'#f1c40f', desc:'Golden crown' },
+  { id:'helmet',   name:'⛑️ Helmet',      slot:'head',  color:'#95a5a6', desc:'Iron helmet' },
+  { id:'halo',     name:'😇 Halo',        slot:'head',  color:'#f9e79f', desc:'Angel halo' },
+  { id:'horns',    name:'😈 Horns',       slot:'head',  color:'#e74c3c', desc:'Devil horns' },
+  { id:'cape',     name:'🦸 Cape',        slot:'body',  color:'#e94560', desc:'Hero cape' },
+  { id:'armor',    name:'🛡️ Armor',       slot:'body',  color:'#5dade2', desc:'Blue armor' },
+  { id:'tux',      name:'🤵 Tuxedo',      slot:'body',  color:'#2c3e50', desc:'Fancy tuxedo' },
+  { id:'wings',    name:'🪽 Wings',       slot:'back',  color:'#aed6f1', desc:'Angel wings' },
+  { id:'jetpack',  name:'🚀 Jetpack',     slot:'back',  color:'#e67e22', desc:'Jetpack' },
+  { id:'scarf',    name:'🧣 Scarf',       slot:'neck',  color:'#e74c3c', desc:'Red scarf' },
+  { id:'glasses',  name:'🕶️ Sunglasses', slot:'face',  color:'#222',    desc:'Cool shades' },
+  { id:'mask',     name:'🎭 Mask',        slot:'face',  color:'#8e44ad', desc:'Mystery mask' },
+  { id:'sword',    name:'⚔️ Sword',       slot:'hand',  color:'#bdc3c7', desc:'Steel sword' },
+  { id:'shield',   name:'🛡️ Shield',      slot:'hand',  color:'#2980b9', desc:'Blue shield' },
+  { id:'wand',     name:'🪄 Wand',        slot:'hand',  color:'#9b59b6', desc:'Magic wand' },
+  { id:'boots',    name:'👢 Boots',       slot:'feet',  color:'#8b4513', desc:'Leather boots' },
+  { id:'sneakers', name:'👟 Sneakers',    slot:'feet',  color:'#2ecc71', desc:'Green sneakers' },
+  { id:'aura_fire',name:'🔥 Fire Aura',   slot:'aura',  color:'#e74c3c', desc:'Burning aura' },
+  { id:'aura_ice', name:'❄️ Ice Aura',    slot:'aura',  color:'#5dade2', desc:'Frost aura' },
+  { id:'aura_gold',name:'✨ Gold Aura',   slot:'aura',  color:'#f1c40f', desc:'Sparkling aura' },
+];
+
+// ─── Chests ───
+const NUM_CHESTS = 20;
+const CHEST_RANGE = 45;
+let chests = []; // { id, x, y, opened, equipId }
+
+function generateChests(seed) {
+  const rng = seededRandom(seed + 999);
+  const result = [];
+  for (let i = 0; i < NUM_CHESTS; i++) {
+    let cx, cy, attempts = 0;
+    do {
+      cx = 6 + Math.floor(rng() * (MAP_COLS - 12));
+      cy = 6 + Math.floor(rng() * (MAP_ROWS - 12));
+      attempts++;
+    } while (!WALKABLE.has(MAP[cy]?.[cx]) && attempts < 300);
+    const equipIdx = Math.floor(rng() * EQUIP_LIST.length);
+    result.push({
+      id: i,
+      x: cx * TILE + TILE / 2,
+      y: cy * TILE + TILE / 2,
+      opened: false,
+      equipId: EQUIP_LIST[equipIdx].id,
+    });
+  }
+  return result;
+}
+
 const NUM_CARS = 4;
 let cars = []; // { id, x, y, dir, driverPid: null }
 
@@ -420,6 +472,7 @@ const myPlayer = {
   emote: '', emoteTime: 0,
   hp: MAX_HP, ghostUntil: 0,
   carId: -1,
+  equips: [], // array of equip ids
 };
 
 const remotePlayers = {};
@@ -502,6 +555,7 @@ function createRoom() {
   mapSeed = Math.floor(Math.random() * 2147483646) + 1;
   MAP = generateMap(mapSeed);
   cars = generateCars(mapSeed);
+  chests = generateChests(mapSeed);
   isHost = true;
   myPlayer.name = lobbyName.value.trim() || 'Player';
   nameInput.value = myPlayer.name;
@@ -648,7 +702,7 @@ function initPeer(customId, hostPeerId) {
     const pid = conn.peer;
     conn.on('open', () => {
       connections[pid] = conn;
-      conn.send({ type: 'welcome', mapSeed, hostPlayer: getMyState(), players: getRemotePlayerStates(), peers: Object.keys(connections).filter(i => i !== pid), cars: cars });
+      conn.send({ type: 'welcome', mapSeed, hostPlayer: getMyState(), players: getRemotePlayerStates(), peers: Object.keys(connections).filter(i => i !== pid), cars: cars, chests: chests });
       updateOnlineCount(); updatePlayerList();
     });
     conn.on('data', data => handleData(pid, data));
@@ -685,6 +739,7 @@ function handleData(fromId, data) {
     case 'welcome':
       mapSeed = data.mapSeed; MAP = generateMap(mapSeed);
       cars = data.cars || generateCars(mapSeed);
+      chests = data.chests || generateChests(mapSeed);
       if (data.hostPlayer) remotePlayers[fromId] = makeRemote(data.hostPlayer, fromId);
       if (data.players) for (const [pid, ps] of Object.entries(data.players)) remotePlayers[pid] = makeRemote(ps, pid);
       if (data.peers) data.peers.forEach(pid => { if (pid !== myId && !connections[pid]) connectToPeer(pid); });
@@ -783,10 +838,25 @@ function handleData(fromId, data) {
         cars[data.carId].x = data.x; cars[data.carId].y = data.y; cars[data.carId].dir = data.dir;
       }
       break;
+    case 'chest_open':
+      if (data.chestId >= 0 && data.chestId < chests.length) {
+        chests[data.chestId].opened = true;
+        if (remotePlayers[fromId]) {
+          if (!remotePlayers[fromId].equips) remotePlayers[fromId].equips = [];
+          const eq = EQUIP_LIST.find(e => e.id === data.equipId);
+          if (eq) {
+            remotePlayers[fromId].equips = remotePlayers[fromId].equips.filter(e => EQUIP_LIST.find(d=>d.id===e)?.slot !== eq.slot);
+            remotePlayers[fromId].equips.push(data.equipId);
+          }
+        }
+      }
+      break;
+    case 'equip_sync':
+      if (remotePlayers[fromId]) remotePlayers[fromId].equips = data.equips || [];
+      break;
     case 'player_left':
       if (data.peerId && remotePlayers[data.peerId]) {
         notify((remotePlayers[data.peerId].name||'Someone') + ' left');
-        // release any car they were driving
         for (const car of cars) if (car.driverPid === data.peerId) car.driverPid = null;
         delete remotePlayers[data.peerId];
         updatePlayerList();
@@ -797,7 +867,7 @@ function handleData(fromId, data) {
 
 function makeRemote(p, pid) {
   if (p.avatar && pid) loadRemoteAvatar(pid, p.avatar);
-  return { ...p, targetX: p.x, targetY: p.y, hp: p.hp ?? MAX_HP, ghostUntil: p.ghostUntil ?? 0, voiceOn: false, emote: '', emoteTime: 0 };
+  return { ...p, targetX: p.x, targetY: p.y, hp: p.hp ?? MAX_HP, ghostUntil: p.ghostUntil ?? 0, voiceOn: false, emote: '', emoteTime: 0, equips: p.equips || [] };
 }
 
 function connectToPeer(tid) {
@@ -816,7 +886,7 @@ function connectToPeer(tid) {
 function getMyState() {
   return { x: myPlayer.x, y: myPlayer.y, dir: myPlayer.dir, frame: myPlayer.frame,
     walking: myPlayer.walking, color: myPlayer.color, name: nameInput.value||'Player',
-    hp: myPlayer.hp, ghostUntil: myPlayer.ghostUntil, avatar: myAvatarDataUrl, carId: myPlayer.carId };
+    hp: myPlayer.hp, ghostUntil: myPlayer.ghostUntil, avatar: myAvatarDataUrl, carId: myPlayer.carId, equips: myPlayer.equips };
 }
 
 function getRemotePlayerStates() {
@@ -872,6 +942,17 @@ function performAttack() {
     return;
   }
 
+  // check if near a chest to open
+  for (const chest of chests) {
+    if (chest.opened) continue;
+    const dx = myPlayer.x - chest.x, dy = myPlayer.y - chest.y;
+    if (Math.sqrt(dx*dx + dy*dy) < CHEST_RANGE) {
+      openChest(chest);
+      lastAttackTime = now;
+      return;
+    }
+  }
+
   // check if near a car to enter
   for (const car of cars) {
     if (car.driverPid) continue;
@@ -918,6 +999,24 @@ function exitCar() {
   broadcast({ type: 'car_exit', carId: myPlayer.carId, carX: car.x, carY: car.y, carDir: car.dir });
   myPlayer.carId = -1;
   notify('Exited car');
+}
+
+function openChest(chest) {
+  chest.opened = true;
+  const eq = EQUIP_LIST.find(e => e.id === chest.equipId);
+  if (eq) {
+    myPlayer.equips = myPlayer.equips.filter(eid => EQUIP_LIST.find(d=>d.id===eid)?.slot !== eq.slot);
+    myPlayer.equips.push(eq.id);
+    notify('🎁 Got ' + eq.name + '!');
+    addChestEffect(chest.x, chest.y);
+  }
+  broadcast({ type: 'chest_open', chestId: chest.id, equipId: chest.equipId });
+  broadcast({ type: 'equip_sync', equips: myPlayer.equips });
+}
+
+const chestEffects = [];
+function addChestEffect(x, y) {
+  chestEffects.push({ x, y, time: Date.now() });
 }
 
 function getAttackBox(x, y, dir) {
@@ -1160,6 +1259,244 @@ function shadeColor(hex, percent) {
   return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
 }
 
+function drawChest(chest) {
+  const x = Math.round(chest.x), y = Math.round(chest.y);
+  ctx.save();
+  ctx.translate(x, y);
+  if (chest.opened) {
+    // open chest - darker, lid tilted back
+    ctx.fillStyle = '#5D4037'; ctx.fillRect(-12, -4, 24, 14); // base
+    ctx.fillStyle = '#4E342E'; ctx.fillRect(-12, -4, 24, 3);  // rim
+    ctx.fillStyle = '#6D4C41'; ctx.fillRect(-14, -12, 28, 10); // lid (tilted)
+    ctx.fillStyle = '#3E2723'; ctx.fillRect(-14, -12, 28, 2);  // lid top edge
+    ctx.fillStyle = '#333';    ctx.fillRect(-2, -4, 4, 4);     // keyhole
+  } else {
+    // closed chest - golden accents
+    ctx.fillStyle = '#8D6E63'; ctx.fillRect(-12, -6, 24, 16);  // body
+    ctx.fillStyle = '#6D4C41'; ctx.fillRect(-12, -6, 24, 4);   // lid
+    ctx.fillStyle = '#f1c40f'; ctx.fillRect(-13, -3, 26, 2);   // gold band
+    ctx.fillStyle = '#f1c40f'; ctx.fillRect(-13, 4, 26, 2);    // gold band bottom
+    ctx.fillStyle = '#f39c12'; ctx.fillRect(-3, -1, 6, 5);     // lock
+    ctx.fillStyle = '#e67e22'; ctx.fillRect(-1, 0, 2, 3);      // keyhole
+    // sparkle
+    const t = Date.now() * 0.003;
+    ctx.globalAlpha = 0.4 + 0.3 * Math.sin(t + chest.id);
+    ctx.fillStyle = '#f9e79f';
+    ctx.fillRect(-10 + Math.sin(t*1.3+chest.id)*3, -10, 2, 2);
+    ctx.fillRect(8 + Math.cos(t*1.7+chest.id)*3, -8, 2, 2);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+function drawChestEffects() {
+  const now = Date.now();
+  for (let i = chestEffects.length - 1; i >= 0; i--) {
+    const ef = chestEffects[i];
+    const elapsed = now - ef.time;
+    if (elapsed > 1000) { chestEffects.splice(i, 1); continue; }
+    const prog = elapsed / 1000;
+    ctx.save();
+    ctx.globalAlpha = 1 - prog;
+    ctx.font = `${20 + prog * 16}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('🎁', ef.x, ef.y - 20 - prog * 30);
+    ctx.restore();
+  }
+}
+
+function drawEquipment(x, y, dir, equips, frame) {
+  if (!equips || equips.length === 0) return;
+  const now = Date.now();
+  for (const eid of equips) {
+    const eq = EQUIP_LIST.find(e => e.id === eid);
+    if (!eq) continue;
+    ctx.save();
+    ctx.translate(x, y);
+    switch (eq.id) {
+      case 'crown':
+        ctx.fillStyle = '#f1c40f';
+        ctx.fillRect(-7, -24, 14, 5);
+        ctx.fillRect(-9, -27, 4, 4); ctx.fillRect(-1, -29, 3, 6); ctx.fillRect(5, -27, 4, 4);
+        break;
+      case 'helmet':
+        ctx.fillStyle = '#7f8c8d';
+        ctx.fillRect(-8, -24, 16, 8);
+        ctx.fillStyle = '#95a5a6';
+        ctx.fillRect(-6, -26, 12, 4);
+        ctx.fillStyle = '#bdc3c7';
+        ctx.fillRect(-2, -17, 4, 3);
+        break;
+      case 'halo':
+        ctx.strokeStyle = '#f9e79f';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(0, -26, 10, 3, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(249,231,159,0.3)';
+        ctx.beginPath();
+        ctx.ellipse(0, -26, 12, 4, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        break;
+      case 'horns':
+        ctx.fillStyle = '#c0392b';
+        ctx.beginPath(); ctx.moveTo(-8, -20); ctx.lineTo(-12, -30); ctx.lineTo(-4, -22); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(8, -20); ctx.lineTo(12, -30); ctx.lineTo(4, -22); ctx.fill();
+        break;
+      case 'cape': {
+        const swing = Math.sin(now * 0.004) * 3;
+        ctx.fillStyle = eq.color;
+        ctx.beginPath();
+        ctx.moveTo(-6, -8); ctx.lineTo(-8 + swing, 12); ctx.lineTo(8 + swing, 12); ctx.lineTo(6, -8);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(0,0,0,0.15)';
+        ctx.beginPath();
+        ctx.moveTo(-4, -4); ctx.lineTo(-6 + swing, 12); ctx.lineTo(6 + swing, 12); ctx.lineTo(4, -4);
+        ctx.fill();
+        break;
+      }
+      case 'armor':
+        ctx.fillStyle = '#5dade2';
+        ctx.globalAlpha = 0.6;
+        ctx.fillRect(-8, -10, 16, 14);
+        ctx.fillStyle = '#85c1e9';
+        ctx.fillRect(-6, -8, 12, 3);
+        ctx.globalAlpha = 1;
+        break;
+      case 'tux':
+        ctx.fillStyle = '#2c3e50';
+        ctx.fillRect(-7, -8, 14, 12);
+        ctx.fillStyle = '#ecf0f1';
+        ctx.fillRect(-2, -8, 4, 10);
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(-1, -7, 2, 2);
+        break;
+      case 'wings': {
+        const flap = Math.sin(now * 0.006) * 4;
+        ctx.fillStyle = 'rgba(174,214,241,0.6)';
+        ctx.beginPath();
+        ctx.moveTo(-6, -6); ctx.lineTo(-18 - flap, -14); ctx.lineTo(-16 - flap, 2); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(6, -6); ctx.lineTo(18 + flap, -14); ctx.lineTo(16 + flap, 2); ctx.fill();
+        break;
+      }
+      case 'jetpack':
+        ctx.fillStyle = '#7f8c8d';
+        ctx.fillRect(-10, -8, 5, 12); ctx.fillRect(5, -8, 5, 12);
+        ctx.fillStyle = '#e67e22';
+        const flame = 4 + Math.sin(now * 0.02) * 3;
+        ctx.fillRect(-9, 4, 3, flame); ctx.fillRect(6, 4, 3, flame);
+        break;
+      case 'scarf': {
+        const sw = Math.sin(now * 0.005) * 4;
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(-7, -12, 14, 4);
+        ctx.beginPath();
+        ctx.moveTo(6, -10); ctx.lineTo(10 + sw, 0); ctx.lineTo(6 + sw, 2); ctx.lineTo(4, -8);
+        ctx.fill();
+        break;
+      }
+      case 'glasses':
+        ctx.fillStyle = '#222';
+        ctx.fillRect(-7, -18, 6, 4); ctx.fillRect(1, -18, 6, 4);
+        ctx.fillRect(-1, -17, 2, 2);
+        ctx.fillStyle = 'rgba(50,50,50,0.5)';
+        ctx.fillRect(-6, -17, 4, 2); ctx.fillRect(2, -17, 4, 2);
+        break;
+      case 'mask':
+        ctx.fillStyle = '#8e44ad';
+        ctx.globalAlpha = 0.7;
+        ctx.fillRect(-7, -20, 14, 7);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#f1c40f';
+        ctx.fillRect(-5, -19, 3, 3); ctx.fillRect(2, -19, 3, 3);
+        break;
+      case 'sword': {
+        const angle = dir === 0 ? 0.3 : dir === 3 ? -0.3 : dir === 1 ? -0.8 : 0.8;
+        ctx.save();
+        ctx.rotate(angle);
+        ctx.fillStyle = '#bdc3c7'; ctx.fillRect(7, -14, 3, 16);
+        ctx.fillStyle = '#f1c40f'; ctx.fillRect(5, 0, 7, 3);
+        ctx.fillStyle = '#8B4513'; ctx.fillRect(7, 3, 3, 5);
+        ctx.restore();
+        break;
+      }
+      case 'shield': {
+        const sx = dir === 1 ? -12 : dir === 2 ? 8 : -12;
+        ctx.fillStyle = '#2980b9';
+        ctx.beginPath();
+        ctx.moveTo(sx, -8); ctx.lineTo(sx + 10, -8); ctx.lineTo(sx + 10, 2);
+        ctx.lineTo(sx + 5, 6); ctx.lineTo(sx, 2); ctx.fill();
+        ctx.fillStyle = '#f1c40f';
+        ctx.fillRect(sx + 3, -5, 4, 4);
+        break;
+      }
+      case 'wand': {
+        const angle = dir === 0 ? 0.5 : dir === 3 ? -0.5 : dir === 1 ? -1 : 1;
+        ctx.save(); ctx.rotate(angle);
+        ctx.fillStyle = '#8B4513'; ctx.fillRect(8, -2, 14, 3);
+        ctx.fillStyle = '#f9e79f';
+        const sparkle = Math.sin(now * 0.01) * 2;
+        ctx.fillRect(20 + sparkle, -5, 4, 4);
+        ctx.fillRect(22, -3 + sparkle, 4, 4);
+        ctx.restore();
+        break;
+      }
+      case 'boots':
+        ctx.fillStyle = '#8b4513';
+        ctx.fillRect(-7, 6, 5, 5); ctx.fillRect(2, 6, 5, 5);
+        ctx.fillRect(-8, 9, 6, 3); ctx.fillRect(1, 9, 6, 3);
+        break;
+      case 'sneakers':
+        ctx.fillStyle = '#2ecc71';
+        ctx.fillRect(-7, 6, 5, 4); ctx.fillRect(2, 6, 5, 4);
+        ctx.fillStyle = '#ecf0f1';
+        ctx.fillRect(-7, 9, 6, 2); ctx.fillRect(2, 9, 6, 2);
+        break;
+      case 'aura_fire': {
+        ctx.globalAlpha = 0.25 + 0.1 * Math.sin(now * 0.008);
+        const grad = ctx.createRadialGradient(0, 0, 5, 0, 0, 22);
+        grad.addColorStop(0, 'rgba(231,76,60,0.6)');
+        grad.addColorStop(0.5, 'rgba(243,156,18,0.3)');
+        grad.addColorStop(1, 'rgba(231,76,60,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
+        break;
+      }
+      case 'aura_ice': {
+        ctx.globalAlpha = 0.2 + 0.1 * Math.sin(now * 0.006);
+        const grad = ctx.createRadialGradient(0, 0, 5, 0, 0, 22);
+        grad.addColorStop(0, 'rgba(93,173,226,0.5)');
+        grad.addColorStop(0.5, 'rgba(174,214,241,0.2)');
+        grad.addColorStop(1, 'rgba(93,173,226,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
+        break;
+      }
+      case 'aura_gold': {
+        ctx.globalAlpha = 0.2 + 0.15 * Math.sin(now * 0.005);
+        const grad = ctx.createRadialGradient(0, 0, 4, 0, 0, 24);
+        grad.addColorStop(0, 'rgba(241,196,15,0.6)');
+        grad.addColorStop(0.5, 'rgba(249,231,159,0.3)');
+        grad.addColorStop(1, 'rgba(241,196,15,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(0, 0, 24, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
+        for (let i = 0; i < 5; i++) {
+          const a = now * 0.002 + i * 1.256;
+          const r = 16 + Math.sin(now*0.003+i)*4;
+          ctx.fillStyle = 'rgba(249,231,159,0.7)';
+          ctx.fillRect(Math.cos(a)*r - 1, Math.sin(a)*r - 1, 2, 2);
+        }
+        break;
+      }
+    }
+    ctx.restore();
+  }
+}
+
 function drawHpBar(x, y, hp) {
   const tw = 32, h = 4, gap = 1;
   const bw = (tw - gap*(MAX_HP-1)) / MAX_HP;
@@ -1259,6 +1596,8 @@ function drawCharacter(p, isMe) {
     else if (p.dir===1) ctx.fillRect(x-5,y-17,2,3);
     else if (p.dir===2) ctx.fillRect(x+3,y-17,2,3);
   }
+
+  drawEquipment(x, y, p.dir, p.equips || (isMe ? myPlayer.equips : []), frame);
 
   ctx.restore();
 
@@ -1373,14 +1712,17 @@ function draw() {
 
   const drawables = [];
   for (const car of cars) drawables.push({ type:'car', y: car.y, car });
+  for (const chest of chests) drawables.push({ type:'chest', y: chest.y, chest });
   for (const p of all) drawables.push({ type:'player', y: p.y, p });
   drawables.sort((a,b) => a.y - b.y);
 
   for (const d of drawables) {
     if (d.type === 'car') drawCar(d.car);
+    else if (d.type === 'chest') drawChest(d.chest);
     else drawCharacter(d.p, d.p._isMe);
   }
   drawAttackEffects();
+  drawChestEffects();
   ctx.restore();
 
   if (Date.now() < damageFlashUntil) {
@@ -1398,6 +1740,12 @@ function drawMinimap() {
     const t=MAP[r][c];
     ctx.fillStyle = t===0?'#4a7c59':t===1?'#5c5c6e':t===2?'#2e7d32':t===3?'#78909c':t===4?'#2980b9':t===5?'#4a7c59':t===6?'#8B7355':'#4a7c59';
     ctx.fillRect(mx+c*(mw/MAP_COLS), my+r*(mh/MAP_ROWS), mw/MAP_COLS+.5, mh/MAP_ROWS+.5);
+  }
+  // chest dots
+  for (const chest of chests) {
+    if (chest.opened) continue;
+    ctx.fillStyle = '#f1c40f';
+    ctx.fillRect(mx + chest.x * sx - 1.5, my + chest.y * sy - 1.5, 3, 3);
   }
   // car dots
   for (const car of cars) {
