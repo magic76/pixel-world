@@ -320,7 +320,7 @@
     <h3>Players</h3>
     <div id="pl-entries"></div>
   </div>
-  <div id="help-hint">Arrows / WASD to move · Space to interact · Enter to chat · 🎤 proximity voice (10 tiles) · 🎁 find chests!</div>
+  <div id="help-hint">Arrows / WASD to move · Space to interact · Enter to chat · 🎤 voice · 🎁 find chests!</div>
 
   <div id="mobile-controls">
     <div class="dpad">
@@ -1389,10 +1389,10 @@ function update() {
   const driving = myPlayer.carId >= 0;
   const spd = driving ? CAR_SPEED : SPEED;
   let dx = 0, dy = 0;
-  if (keys['ArrowUp'] || keys['w']) dy = -spd;
-  if (keys['ArrowDown'] || keys['s']) dy = spd;
-  if (keys['ArrowLeft'] || keys['a']) dx = -spd;
-  if (keys['ArrowRight'] || keys['d']) dx = spd;
+  if (keys['arrowup'] || keys['w']) dy = -spd;
+  if (keys['arrowdown'] || keys['s']) dy = spd;
+  if (keys['arrowleft'] || keys['a']) dx = -spd;
+  if (keys['arrowright'] || keys['d']) dx = spd;
   if (dx && dy) { dx *= 0.707; dy *= 0.707; }
   myPlayer.walking = !!(dx || dy);
   if (dx || dy) {
@@ -1426,23 +1426,6 @@ function update() {
   const now = Date.now();
   while (attackEffects.length && now-attackEffects[0].time>350) attackEffects.shift();
 
-  // proximity voice: adjust volume based on distance (10 tiles range)
-  updateProximityAudio();
-}
-
-const VOICE_RANGE = 10 * TILE; // 10 tiles in pixels
-function updateProximityAudio() {
-  for (const [pid, audio] of Object.entries(remoteAudios)) {
-    const rp = remotePlayers[pid];
-    if (!rp) { audio.volume = 0; continue; }
-    const dx = myPlayer.x - rp.x, dy = myPlayer.y - rp.y;
-    const dist = Math.sqrt(dx*dx + dy*dy);
-    if (dist >= VOICE_RANGE) {
-      audio.volume = 0;
-    } else {
-      audio.volume = Math.max(0, Math.min(1, 1 - dist / VOICE_RANGE));
-    }
-  }
 }
 
 // ─── Drawing ───
@@ -2117,19 +2100,6 @@ function draw() {
   const sc=Math.max(0,Math.floor(camX/TILE)), ec=Math.min(MAP_COLS,Math.ceil((camX+canvas.width)/TILE)+1);
   const sr=Math.max(0,Math.floor(camY/TILE)), er=Math.min(MAP_ROWS,Math.ceil((camY+canvas.height)/TILE)+1);
   for (let r=sr;r<er;r++) for (let c=sc;c<ec;c++) drawTile(c,r);
-
-  // voice range circle
-  if (micEnabled) {
-    ctx.save();
-    ctx.globalAlpha = 0.06;
-    ctx.fillStyle = '#5dade2';
-    ctx.beginPath(); ctx.arc(myPlayer.x, myPlayer.y, VOICE_RANGE, 0, Math.PI*2); ctx.fill();
-    ctx.globalAlpha = 0.2;
-    ctx.strokeStyle = '#5dade2'; ctx.lineWidth = 1; ctx.setLineDash([6,4]);
-    ctx.beginPath(); ctx.arc(myPlayer.x, myPlayer.y, VOICE_RANGE, 0, Math.PI*2); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-  }
 
   // collect cars and players, sort by y for depth
   const all = [{...myPlayer, name:nameInput.value||'Player', _isMe:true}];
