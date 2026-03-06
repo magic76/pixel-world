@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Pixel World</title>
+<title>Virtual Office</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -276,8 +276,8 @@
 
 <div id="lobby-overlay">
   <div id="lobby">
-    <h1>Pixel World</h1>
-    <p>Create a room or join a friend's room</p>
+    <h1>Virtual Office</h1>
+    <p>Create a room or join a friend's office</p>
     <div class="avatar-upload">
       <div class="avatar-preview" onclick="document.getElementById('avatar-file').click()" title="Upload avatar">
         <span class="placeholder" id="avatar-placeholder">👤</span>
@@ -320,7 +320,7 @@
     <h3>Players</h3>
     <div id="pl-entries"></div>
   </div>
-  <div id="help-hint">Arrows / WASD to move · Space to attack · Enter to chat · 🎤 voice · 🎁 find chests!</div>
+  <div id="help-hint">Arrows / WASD to move · Space to interact · Enter to chat · 🎤 proximity voice (10 tiles) · 🎁 find chests!</div>
 
   <div id="mobile-controls">
     <div class="dpad">
@@ -376,8 +376,16 @@ const COLORS = [
   '#9b59b6','#1abc9c','#e67e22','#2ecc71','#3498db',
 ];
 
-// tile types: 0=grass, 1=wall, 2=tree, 3=rock, 4=water, 5=flower, 6=path
-const WALKABLE = new Set([0, 5, 6]);
+// tile types for office map
+const T = {
+  FLOOR: 0, WALL: 1, DESK: 2, MONITOR: 3, CARPET: 4,
+  CORRIDOR: 5, DOOR: 6, WINDOW: 7, PLANT: 8,
+  PANTRY_FLOOR: 9, COUNTER: 10, FRIDGE: 11, COFFEE: 12,
+  CHAIR: 13, WHITEBOARD: 14, SOFA: 15, TABLE: 16,
+};
+const WALKABLE = new Set([T.FLOOR, T.CORRIDOR, T.DOOR, T.CARPET, T.PANTRY_FLOOR, T.CHAIR]);
+
+const roomLabels = []; // { x, y, label } for room number rendering
 
 // ─── Seeded Map ───
 function seededRandom(seed) {
@@ -388,103 +396,185 @@ function seededRandom(seed) {
 function generateMap(seed) {
   const rng = seededRandom(seed);
   const map = [];
+  roomLabels.length = 0;
   for (let r = 0; r < MAP_ROWS; r++) {
     map[r] = [];
-    for (let c = 0; c < MAP_COLS; c++) map[r][c] = 0;
+    for (let c = 0; c < MAP_COLS; c++) map[r][c] = T.CORRIDOR;
   }
 
-  // border walls
+  // outer walls
   for (let r = 0; r < MAP_ROWS; r++)
     for (let c = 0; c < MAP_COLS; c++)
-      if (r === 0 || r === MAP_ROWS-1 || c === 0 || c === MAP_COLS-1) map[r][c] = 1;
+      if (r === 0 || r === MAP_ROWS-1 || c === 0 || c === MAP_COLS-1) map[r][c] = T.WALL;
 
-  // paths (horizontal & vertical dirt roads)
-  const numPaths = 4 + Math.floor(rng() * 4);
-  for (let i = 0; i < numPaths; i++) {
-    if (rng() < 0.5) {
-      const row = 5 + Math.floor(rng() * (MAP_ROWS - 10));
-      const w = 1 + Math.floor(rng() * 2);
-      for (let c = 1; c < MAP_COLS - 1; c++)
-        for (let dr = 0; dr < w; dr++)
-          if (row + dr < MAP_ROWS - 1) map[row + dr][c] = 6;
+  // windows on outer walls
+  for (let c = 3; c < MAP_COLS-3; c += 4) { map[0][c] = T.WINDOW; map[MAP_ROWS-1][c] = T.WINDOW; }
+  for (let r = 3; r < MAP_ROWS-3; r += 4) { map[r][0] = T.WINDOW; map[r][MAP_COLS-1] = T.WINDOW; }
+
+  function fill(r1,c1,r2,c2,t) {
+    for (let r=Math.max(1,r1);r<=Math.min(MAP_ROWS-2,r2);r++)
+      for (let c=Math.max(1,c1);c<=Math.min(MAP_COLS-2,c2);c++) map[r][c]=t;
+  }
+  function walls(r1,c1,r2,c2) {
+    for (let c=c1;c<=c2;c++) { if(r1>0) map[r1][c]=T.WALL; if(r2<MAP_ROWS-1) map[r2][c]=T.WALL; }
+    for (let r=r1;r<=r2;r++) { if(c1>0) map[r][c1]=T.WALL; if(c2<MAP_COLS-1) map[r][c2]=T.WALL; }
+  }
+  function door(r,c) { if(r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=T.DOOR; }
+  function clearAround(r,c,ft) {
+    for (const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]])
+      if (map[r+dr]?.[c+dc]===ft || map[r+dr]?.[c+dc]===T.DESK || map[r+dr]?.[c+dc]===T.MONITOR || map[r+dr]?.[c+dc]===T.TABLE)
+        map[r+dr][c+dc] = ft;
+  }
+
+  // ── Corridors: a grid of 3-wide halls ──
+  const midR = MAP_ROWS/2|0, midC = MAP_COLS/2|0;
+  // horizontal corridors at rows: 1, ~19, ~38, ~57, ~74
+  const hCorrs = [1, 19, midR, MAP_ROWS - 20, MAP_ROWS - 2];
+  // vertical corridors at cols: 1, ~20, ~50, ~80, ~99
+  const vCorrs = [1, 19, midC, MAP_COLS - 20, MAP_COLS - 2];
+
+  for (const hr of hCorrs)
+    for (let d = -1; d <= 1; d++)
+      for (let c = 1; c < MAP_COLS-1; c++)
+        if (hr+d > 0 && hr+d < MAP_ROWS-1) map[hr+d][c] = T.CORRIDOR;
+
+  for (const vc of vCorrs)
+    for (let d = -1; d <= 1; d++)
+      for (let r = 1; r < MAP_ROWS-1; r++)
+        if (vc+d > 0 && vc+d < MAP_COLS-1) map[r][vc+d] = T.CORRIDOR;
+
+  // ── Room builder with 4 doors ──
+  let roomNum = 1;
+  function makeRoom(r1, c1, rh, cw, type) {
+    if (rh < 5 || cw < 5) return; // minimum viable room
+    const r2 = r1+rh-1, c2 = c1+cw-1;
+    if (r2 >= MAP_ROWS-1 || c2 >= MAP_COLS-1 || r1 <= 0 || c1 <= 0) return;
+
+    const ft = type==='meeting' ? T.CARPET : type==='pantry' ? T.PANTRY_FLOOR : T.FLOOR;
+    // fill entire room area with floor, then draw walls, then re-fill interior
+    fill(r1, c1, r2, c2, ft);
+    walls(r1, c1, r2, c2);
+    fill(r1+1, c1+1, r2-1, c2-1, ft);
+
+    // 4 doors: one on each side, centered
+    const doorTop = { r: r1, c: c1 + Math.floor(cw/2) };
+    const doorBot = { r: r2, c: c1 + Math.floor(cw/2) };
+    const doorLeft = { r: r1 + Math.floor(rh/2), c: c1 };
+    const doorRight = { r: r1 + Math.floor(rh/2), c: c2 };
+    door(doorTop.r, doorTop.c);
+    door(doorBot.r, doorBot.c);
+    door(doorLeft.r, doorLeft.c);
+    door(doorRight.r, doorRight.c);
+
+    // also ensure tile next to door inside is floor (not furniture)
+    const doorCells = [doorTop, doorBot, doorLeft, doorRight];
+
+    // label
+    const label = type==='meeting' ? 'MTG' : type==='pantry' ? 'Pantry' : String(roomNum++);
+    roomLabels.push({ x: (c1+c2)/2*TILE+TILE/2, y: r1*TILE+TILE/2, label, type });
+
+    // furnish
+    if (type === 'office') {
+      for (let r = r1+2; r < r2-1; r += 3)
+        for (let c = c1+2; c < c2-2; c += 4) {
+          if (map[r][c]===ft) { map[r][c]=T.DESK; if(c+1<c2-1 && map[r][c+1]===ft) map[r][c+1]=T.MONITOR; }
+          if (r+1<r2-1 && map[r+1][c]===ft) map[r+1][c]=T.CHAIR;
+        }
+    } else if (type === 'meeting') {
+      const tr = r1+Math.floor(rh/2)-1;
+      for (let c=c1+2;c<=c2-2;c++) { if(map[tr][c]===ft) map[tr][c]=T.TABLE; if(tr+1<=r2-1&&map[tr+1][c]===ft) map[tr+1][c]=T.TABLE; }
+      for (let c=c1+2;c<=c2-2;c+=2) {
+        if(tr-1>r1 && map[tr-1][c]===ft) map[tr-1][c]=T.CHAIR;
+        if(tr+2<r2 && map[tr+2][c]===ft) map[tr+2][c]=T.CHAIR;
+      }
+      if(map[r1+1]?.[c2-1]===ft) map[r1+1][c2-1]=T.WHITEBOARD;
+    } else if (type === 'pantry') {
+      for (let c=c1+1;c<c2;c++) if(map[r1+1][c]===ft) map[r1+1][c]=T.COUNTER;
+      if(map[r1+1][c1+1]===T.COUNTER) map[r1+1][c1+1]=T.FRIDGE;
+      if(map[r1+1][c2-1]===T.COUNTER) map[r1+1][c2-1]=T.COFFEE;
+      const tr = r1+Math.floor(rh/2)+1;
+      for (let c=c1+2;c<c2-1;c+=3) {
+        if(tr<r2 && map[tr][c]===ft) map[tr][c]=T.TABLE;
+        if(tr-1>r1+1 && map[tr-1][c]===ft) map[tr-1][c]=T.CHAIR;
+        if(tr+1<r2 && map[tr+1][c]===ft) map[tr+1][c]=T.CHAIR;
+      }
+      if(r2-2>r1+1 && map[r2-2][c1+1]===ft) map[r2-2][c1+1]=T.SOFA;
     } else {
-      const col = 5 + Math.floor(rng() * (MAP_COLS - 10));
-      const w = 1 + Math.floor(rng() * 2);
-      for (let r = 1; r < MAP_ROWS - 1; r++)
-        for (let dc = 0; dc < w; dc++)
-          if (col + dc < MAP_COLS - 1) map[r][col + dc] = 6;
+      // small room: desk + monitor + chair in a corner away from doors
+      const dr = r1+1, dc = c2-1;
+      if(dr<r2 && dc>c1 && map[dr][dc]===ft) map[dr][dc]=T.DESK;
+      if(dr<r2 && dc-1>c1 && map[dr][dc-1]===ft) map[dr][dc-1]=T.MONITOR;
+      if(dr+1<r2 && dc>c1 && map[dr+1][dc]===ft) map[dr+1][dc]=T.CHAIR;
     }
-  }
 
-  // water ponds
-  const numPonds = 5 + Math.floor(rng() * 6);
-  for (let i = 0; i < numPonds; i++) {
-    const cr = 8 + Math.floor(rng() * (MAP_ROWS - 16));
-    const cc = 8 + Math.floor(rng() * (MAP_COLS - 16));
-    const size = 3 + Math.floor(rng() * 5);
-    for (let dr = -size; dr <= size; dr++) {
-      for (let dc = -size; dc <= size; dc++) {
-        const dist = Math.sqrt(dr*dr + dc*dc);
-        const r2 = cr + dr, c2 = cc + dc;
-        if (r2 > 0 && r2 < MAP_ROWS-1 && c2 > 0 && c2 < MAP_COLS-1) {
-          if (dist < size * 0.7 || (dist < size && rng() < 0.5)) {
-            map[r2][c2] = 4;
-          }
-        }
+    // clear 1 tile inside each door so nothing blocks entry
+    for (const d of doorCells) {
+      for (const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+        const nr=d.r+dr, nc=d.c+dc;
+        if(nr>r1&&nr<r2&&nc>c1&&nc<c2 && !WALKABLE.has(map[nr][nc])) map[nr][nc]=ft;
       }
     }
   }
 
-  // tree clusters (forests)
-  const numForests = 8 + Math.floor(rng() * 8);
-  for (let i = 0; i < numForests; i++) {
-    const cr = 4 + Math.floor(rng() * (MAP_ROWS - 8));
-    const cc = 4 + Math.floor(rng() * (MAP_COLS - 8));
-    const size = 3 + Math.floor(rng() * 6);
-    for (let dr = -size; dr <= size; dr++) {
-      for (let dc = -size; dc <= size; dc++) {
-        const r2 = cr + dr, c2 = cc + dc;
-        if (r2 > 1 && r2 < MAP_ROWS-2 && c2 > 1 && c2 < MAP_COLS-2) {
-          if (map[r2][c2] === 0 && rng() < 0.4) map[r2][c2] = 2;
-        }
-      }
+  // ── Room layout using corridor grid ──
+  // corridor rows: hCorrs = [1, 19, 38, 57, 74] (approx)
+  // corridor cols: vCorrs = [1, 19, 50, 80, 99] (approx)
+  // rooms fit between corridor pairs
+
+  // band definitions: rows between corridors
+  const rowBands = [];
+  for (let i = 0; i < hCorrs.length-1; i++)
+    rowBands.push([hCorrs[i]+2, hCorrs[i+1]-2]);
+
+  const colBands = [];
+  for (let i = 0; i < vCorrs.length-1; i++)
+    colBands.push([vCorrs[i]+2, vCorrs[i+1]-2]);
+
+  // lay out rooms in the grid cells
+  const layout = [
+    // row 0 (top)
+    { rb:0, cb:0, type:'small' }, { rb:0, cb:1, type:'office' },
+    { rb:0, cb:2, type:'small' }, { rb:0, cb:3, type:'small' },
+    // row 1
+    { rb:1, cb:0, type:'small' }, { rb:1, cb:1, type:'meeting' },
+    { rb:1, cb:2, type:'office' }, { rb:1, cb:3, type:'small' },
+    // row 2
+    { rb:2, cb:0, type:'small' }, { rb:2, cb:1, type:'office' },
+    { rb:2, cb:2, type:'meeting' }, { rb:2, cb:3, type:'small' },
+    // row 3 (bottom)
+    { rb:3, cb:0, type:'meeting' }, { rb:3, cb:1, type:'pantry' },
+    { rb:3, cb:2, type:'small' }, { rb:3, cb:3, type:'small' },
+  ];
+
+  // for small type in same band, subdivide into 2 rooms vertically
+  for (const item of layout) {
+    const [r1, r2] = rowBands[item.rb] || [];
+    const [c1, c2] = colBands[item.cb] || [];
+    if (r1 === undefined || c1 === undefined) continue;
+    const rh = r2-r1+1, cw = c2-c1+1;
+
+    if (item.type === 'small' && rh >= 12) {
+      const half = Math.floor(rh/2);
+      makeRoom(r1, c1, half, cw, 'small');
+      makeRoom(r1+half, c1, rh-half, cw, 'small');
+    } else if (item.type === 'small' && cw >= 16) {
+      const half = Math.floor(cw/2);
+      makeRoom(r1, c1, rh, half, 'small');
+      makeRoom(r1, c1+half, rh, cw-half, 'small');
+    } else {
+      makeRoom(r1, c1, rh, cw, item.type);
     }
   }
 
-  // scattered trees
-  for (let r = 2; r < MAP_ROWS-2; r++)
-    for (let c = 2; c < MAP_COLS-2; c++)
-      if (map[r][c] === 0 && rng() < 0.02) map[r][c] = 2;
+  // scatter plants in corridors
+  for (let r=2;r<MAP_ROWS-2;r++)
+    for (let c=2;c<MAP_COLS-2;c++)
+      if (map[r][c]===T.CORRIDOR && rng()<0.006) map[r][c]=T.PLANT;
 
-  // rocks
-  for (let r = 2; r < MAP_ROWS-2; r++)
-    for (let c = 2; c < MAP_COLS-2; c++)
-      if (map[r][c] === 0 && rng() < 0.012) map[r][c] = 3;
-
-  // flower patches
-  const numFlowers = 10 + Math.floor(rng() * 10);
-  for (let i = 0; i < numFlowers; i++) {
-    const cr = 4 + Math.floor(rng() * (MAP_ROWS - 8));
-    const cc = 4 + Math.floor(rng() * (MAP_COLS - 8));
-    const size = 2 + Math.floor(rng() * 3);
-    for (let dr = -size; dr <= size; dr++)
-      for (let dc = -size; dc <= size; dc++) {
-        const r2 = cr+dr, c2 = cc+dc;
-        if (r2 > 0 && r2 < MAP_ROWS-1 && c2 > 0 && c2 < MAP_COLS-1)
-          if (map[r2][c2] === 0 && rng() < 0.5) map[r2][c2] = 5;
-      }
-  }
-
-  // clear spawn area (center)
-  const spawnR = MAP_ROWS/2|0, spawnC = MAP_COLS/2|0;
-  for (let r = spawnR-4; r <= spawnR+4; r++)
-    for (let c = spawnC-4; c <= spawnC+4; c++)
-      if (r > 0 && r < MAP_ROWS-1 && c > 0 && c < MAP_COLS-1) map[r][c] = 0;
-  // spawn area path cross
-  for (let c = spawnC-6; c <= spawnC+6; c++)
-    if (c > 0 && c < MAP_COLS-1) map[spawnR][c] = 6;
-  for (let r = spawnR-6; r <= spawnR+6; r++)
-    if (r > 0 && r < MAP_ROWS-1) map[r][spawnC] = 6;
+  // clear spawn area
+  for (let r=midR-2;r<=midR+2;r++)
+    for (let c=midC-2;c<=midC+2;c++)
+      if(r>0&&r<MAP_ROWS-1&&c>0&&c<MAP_COLS-1) map[r][c]=T.CORRIDOR;
 
   return map;
 }
@@ -1323,71 +1413,181 @@ function update() {
   }
   const now = Date.now();
   while (attackEffects.length && now-attackEffects[0].time>350) attackEffects.shift();
+
+  // proximity voice: adjust volume based on distance (10 tiles range)
+  updateProximityAudio();
+}
+
+const VOICE_RANGE = 10 * TILE; // 10 tiles in pixels
+function updateProximityAudio() {
+  for (const [pid, audio] of Object.entries(remoteAudios)) {
+    const rp = remotePlayers[pid];
+    if (!rp) { audio.volume = 0; continue; }
+    const dx = myPlayer.x - rp.x, dy = myPlayer.y - rp.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist >= VOICE_RANGE) {
+      audio.volume = 0;
+    } else {
+      audio.volume = Math.max(0, Math.min(1, 1 - dist / VOICE_RANGE));
+    }
+  }
 }
 
 // ─── Drawing ───
-const grassDetail = [];
+const tileDetail = [];
 for (let r = 0; r < MAP_ROWS; r++) {
-  grassDetail[r] = [];
-  for (let c = 0; c < MAP_COLS; c++) grassDetail[r][c] = Math.random();
+  tileDetail[r] = [];
+  for (let c = 0; c < MAP_COLS; c++) tileDetail[r][c] = Math.random();
 }
 
 function drawTile(col, row) {
   const x = col*TILE, y = row*TILE;
   const t = MAP[row]?.[col] ?? 0;
+  const det = tileDetail[row]?.[col] ?? 0;
 
-  // base grass
-  ctx.fillStyle = (col+row)%2===0 ? '#4a7c59' : '#528a62';
-  ctx.fillRect(x, y, TILE, TILE);
-
-  const det = grassDetail[row]?.[col] ?? 0;
-  if (t === 0 && det > 0.88) {
-    ctx.fillStyle = '#5d9d6d';
-    ctx.fillRect(x+10, y+8, 2, 6);
-    ctx.fillRect(x+20, y+18, 2, 5);
+  switch (t) {
+    case T.FLOOR:
+      ctx.fillStyle = (col+row)%2===0 ? '#e8e0d4' : '#e2dace';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.strokeStyle='#d5cdc0'; ctx.strokeRect(x+.5,y+.5,TILE-1,TILE-1);
+      break;
+    case T.WALL:
+      ctx.fillStyle = '#7f8c8d'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#6c7a7b'; ctx.fillRect(x+1,y+1,TILE-2,TILE-2);
+      ctx.fillStyle = '#8e9c9d'; ctx.fillRect(x+3,y+3,TILE-10,2);
+      break;
+    case T.DESK:
+      ctx.fillStyle = (col+row)%2===0 ? '#e8e0d4' : '#e2dace';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#b08050'; ctx.fillRect(x+2,y+4,TILE-4,TILE-8);
+      ctx.fillStyle = '#c49060'; ctx.fillRect(x+3,y+5,TILE-6,TILE-10);
+      ctx.fillStyle = '#a07040'; ctx.fillRect(x+4,y+TILE-6,4,4);
+      ctx.fillRect(x+TILE-8,y+TILE-6,4,4);
+      break;
+    case T.MONITOR:
+      ctx.fillStyle = (col+row)%2===0 ? '#e8e0d4' : '#e2dace';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#b08050'; ctx.fillRect(x+2,y+8,TILE-4,TILE-12);
+      ctx.fillStyle = '#2c3e50'; ctx.fillRect(x+6,y+2,TILE-12,16);
+      ctx.fillStyle = '#3498db';
+      const flicker = Math.sin(Date.now()/1000+col*3+row)*0.1+0.9;
+      ctx.globalAlpha = flicker;
+      ctx.fillRect(x+8,y+4,TILE-16,12);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#555'; ctx.fillRect(x+14,y+18,4,4);
+      ctx.fillRect(x+12,y+22,8,2);
+      break;
+    case T.CARPET:
+      ctx.fillStyle = (col+row)%2===0 ? '#5b7fa5' : '#5479a0';
+      ctx.fillRect(x,y,TILE,TILE);
+      if (det>0.8) { ctx.fillStyle='rgba(255,255,255,0.05)'; ctx.fillRect(x+4,y+4,8,8); }
+      break;
+    case T.CORRIDOR:
+      ctx.fillStyle = (col+row)%2===0 ? '#d4cec2' : '#cfc9bd';
+      ctx.fillRect(x,y,TILE,TILE);
+      if (det>0.92) { ctx.fillStyle='#c5bfb3'; ctx.fillRect(x+12,y+12,4,4); }
+      break;
+    case T.DOOR:
+      ctx.fillStyle = (col+row)%2===0 ? '#d4cec2' : '#cfc9bd';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#a0724a'; ctx.fillRect(x+6,y+2,TILE-12,TILE-4);
+      ctx.fillStyle = '#b88458'; ctx.fillRect(x+8,y+4,TILE-16,TILE-8);
+      ctx.fillStyle = '#d4a86a'; ctx.fillRect(x+TILE-12,y+14,3,4);
+      break;
+    case T.WINDOW:
+      ctx.fillStyle = '#7f8c8d'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#85c1e9';
+      const sky = Math.sin(Date.now()/2000+col*0.5)*0.08+0.92;
+      ctx.globalAlpha = sky;
+      ctx.fillRect(x+4,y+4,TILE-8,TILE-8);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#6c7a7b';
+      ctx.fillRect(x+TILE/2-1,y+3,2,TILE-6);
+      ctx.fillRect(x+3,y+TILE/2-1,TILE-6,2);
+      break;
+    case T.PLANT:
+      ctx.fillStyle = (col+row)%2===0 ? '#d4cec2' : '#cfc9bd';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#8B6914'; ctx.fillRect(x+10,y+20,12,10);
+      ctx.fillStyle = '#27ae60'; ctx.beginPath(); ctx.arc(x+16,y+16,8,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#2ecc71'; ctx.beginPath(); ctx.arc(x+14,y+13,5,0,Math.PI*2); ctx.fill();
+      break;
+    case T.PANTRY_FLOOR:
+      ctx.fillStyle = (col+row)%2===0 ? '#f0e6d3' : '#ece2cf';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.strokeStyle = '#d8cebb'; ctx.strokeRect(x+.5,y+.5,TILE-1,TILE-1);
+      break;
+    case T.COUNTER:
+      ctx.fillStyle = '#f0e6d3'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#95a5a6'; ctx.fillRect(x+1,y+4,TILE-2,TILE-6);
+      ctx.fillStyle = '#bdc3c7'; ctx.fillRect(x+2,y+5,TILE-4,4);
+      ctx.fillStyle = '#7f8c8d'; ctx.fillRect(x+6,y+16,TILE-12,3);
+      break;
+    case T.FRIDGE:
+      ctx.fillStyle = '#f0e6d3'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#ecf0f1'; ctx.fillRect(x+4,y+2,TILE-8,TILE-4);
+      ctx.fillStyle = '#bdc3c7'; ctx.fillRect(x+6,y+4,TILE-12,12);
+      ctx.fillStyle = '#95a5a6'; ctx.fillRect(x+6,y+TILE/2,TILE-12,12);
+      ctx.fillStyle = '#7f8c8d'; ctx.fillRect(x+TILE-10,y+10,2,6);
+      ctx.fillRect(x+TILE-10,y+TILE/2+4,2,6);
+      break;
+    case T.COFFEE:
+      ctx.fillStyle = '#f0e6d3'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#95a5a6'; ctx.fillRect(x+2,y+8,TILE-4,TILE-10);
+      ctx.fillStyle = '#2c3e50'; ctx.fillRect(x+6,y+4,TILE-12,TILE-8);
+      ctx.fillStyle = '#e74c3c'; ctx.fillRect(x+10,y+6,4,3);
+      // steam
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      const st = Math.sin(Date.now()/600+col)*2;
+      ctx.fillRect(x+12+st,y+1,2,4);
+      ctx.fillRect(x+16+st*0.7,y+2,2,3);
+      break;
+    case T.CHAIR:
+      ctx.fillStyle = (col+row)%2===0 ? '#e8e0d4' : '#e2dace';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#3a3a4a'; ctx.fillRect(x+8,y+10,TILE-16,TILE-14);
+      ctx.fillStyle = '#4a4a5e'; ctx.fillRect(x+10,y+6,TILE-20,TILE-12);
+      // wheels
+      ctx.fillStyle = '#222';
+      ctx.fillRect(x+8,y+TILE-6,3,3); ctx.fillRect(x+TILE-11,y+TILE-6,3,3);
+      break;
+    case T.WHITEBOARD:
+      ctx.fillStyle = (col+row)%2===0 ? '#5b7fa5' : '#5479a0';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#ecf0f1'; ctx.fillRect(x+2,y+3,TILE-4,TILE-8);
+      ctx.fillStyle = '#bdc3c7'; ctx.fillRect(x+2,y+TILE-6,TILE-4,3);
+      // scribbles
+      ctx.strokeStyle = '#3498db'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x+6,y+10); ctx.lineTo(x+TILE-8,y+12); ctx.stroke();
+      ctx.strokeStyle = '#e74c3c';
+      ctx.beginPath(); ctx.moveTo(x+6,y+16); ctx.lineTo(x+TILE-10,y+18); ctx.stroke();
+      break;
+    case T.SOFA:
+      ctx.fillStyle = '#f0e6d3'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#8e44ad'; ctx.fillRect(x+2,y+8,TILE-4,TILE-10);
+      ctx.fillStyle = '#9b59b6'; ctx.fillRect(x+4,y+10,TILE-8,TILE-14);
+      ctx.fillStyle = '#7d3c98'; ctx.fillRect(x+2,y+8,TILE-4,4);
+      break;
+    case T.TABLE:
+      ctx.fillStyle = (col+row)%2===0 ? '#5b7fa5' : '#e8e0d4';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle = '#b08050'; ctx.fillRect(x+2,y+6,TILE-4,TILE-12);
+      ctx.fillStyle = '#c49060'; ctx.fillRect(x+3,y+7,TILE-6,TILE-14);
+      break;
   }
+}
 
-  if (t === 1) {
-    ctx.fillStyle = '#5c5c6e'; ctx.fillRect(x,y,TILE,TILE);
-    ctx.fillStyle = '#4a4a5c'; ctx.fillRect(x+2,y+2,TILE-4,TILE-4);
-    ctx.fillStyle = '#6e6e80'; ctx.fillRect(x+4,y+4,TILE-12,TILE-12);
-  } else if (t === 2) {
-    ctx.fillStyle = '#3e2723'; ctx.fillRect(x+13,y+18,6,14);
-    ctx.fillStyle = '#2e7d32'; ctx.beginPath(); ctx.arc(x+16,y+14,11,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#43a047'; ctx.beginPath(); ctx.arc(x+13,y+10,7,0,Math.PI*2); ctx.fill();
-  } else if (t === 3) {
-    ctx.fillStyle = '#78909c'; ctx.beginPath(); ctx.ellipse(x+16,y+20,11,8,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#90a4ae'; ctx.beginPath(); ctx.ellipse(x+14,y+18,7,5,-0.3,0,Math.PI*2); ctx.fill();
-  } else if (t === 4) {
-    // water
-    ctx.fillStyle = '#2980b9'; ctx.fillRect(x,y,TILE,TILE);
-    ctx.fillStyle = '#3498db';
-    const shimmer = Math.sin((Date.now()/800 + col*0.5 + row*0.3)) * 0.3 + 0.5;
-    ctx.globalAlpha = shimmer;
-    ctx.fillRect(x+4, y+4, TILE-8, TILE-8);
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.fillRect(x+8, y+6, 6, 2);
-    ctx.fillRect(x+18, y+16, 8, 2);
-  } else if (t === 5) {
-    // flower
-    const fc = det > 0.5 ? '#e74c3c' : det > 0.25 ? '#f1c40f' : '#e67e22';
-    ctx.fillStyle = '#5d9d6d'; ctx.fillRect(x+15, y+14, 2, 8);
-    ctx.fillStyle = fc;
-    ctx.beginPath(); ctx.arc(x+16, y+12, 4, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#f9e79f';
-    ctx.beginPath(); ctx.arc(x+16, y+12, 1.5, 0, Math.PI*2); ctx.fill();
-    if (det > 0.6) {
-      ctx.fillStyle = '#5d9d6d'; ctx.fillRect(x+6, y+20, 2, 6);
-      ctx.fillStyle = '#9b59b6'; ctx.beginPath(); ctx.arc(x+7, y+18, 3, 0, Math.PI*2); ctx.fill();
-    }
-  } else if (t === 6) {
-    // dirt path
-    ctx.fillStyle = '#8B7355'; ctx.fillRect(x,y,TILE,TILE);
-    ctx.fillStyle = '#9C8565'; ctx.fillRect(x+2,y+2,TILE-4,TILE-4);
-    if (det > 0.7) {
-      ctx.fillStyle = '#7a6348'; ctx.fillRect(x+8, y+12, 3, 3);
-    }
+function drawRoomLabels() {
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const rl of roomLabels) {
+    const sx = rl.x - camX, sy = rl.y - camY;
+    if (sx < -60 || sx > canvas.width+60 || sy < -30 || sy > canvas.height+30) continue;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    const tw = ctx.measureText(rl.label).width;
+    ctx.fillRect(rl.x - tw/2 - 4, rl.y - 9, tw + 8, 18);
+    ctx.fillStyle = rl.type === 'meeting' ? '#5dade2' : rl.type === 'pantry' ? '#f39c12' : '#ecf0f1';
+    ctx.fillText(rl.label, rl.x, rl.y + 1);
   }
 }
 
@@ -1906,6 +2106,19 @@ function draw() {
   const sr=Math.max(0,Math.floor(camY/TILE)), er=Math.min(MAP_ROWS,Math.ceil((camY+canvas.height)/TILE)+1);
   for (let r=sr;r<er;r++) for (let c=sc;c<ec;c++) drawTile(c,r);
 
+  // voice range circle
+  if (micEnabled) {
+    ctx.save();
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = '#5dade2';
+    ctx.beginPath(); ctx.arc(myPlayer.x, myPlayer.y, VOICE_RANGE, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 0.2;
+    ctx.strokeStyle = '#5dade2'; ctx.lineWidth = 1; ctx.setLineDash([6,4]);
+    ctx.beginPath(); ctx.arc(myPlayer.x, myPlayer.y, VOICE_RANGE, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
   // collect cars and players, sort by y for depth
   const all = [{...myPlayer, name:nameInput.value||'Player', _isMe:true}];
   for (const [pid, rp] of Object.entries(remotePlayers)) all.push({...rp, _isMe:false, _pid:pid});
@@ -1923,6 +2136,7 @@ function draw() {
   }
   drawAttackEffects();
   drawChestEffects();
+  drawRoomLabels();
   ctx.restore();
 
   if (Date.now() < damageFlashUntil) {
@@ -1936,9 +2150,14 @@ function drawMinimap() {
   const mx=canvas.width-mw-12, my=12;
   const sx=mw/MAP_W, sy=mh/MAP_H;
   ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(mx-2,my-2,mw+4,mh+4);
+  const mmColors = {
+    [T.FLOOR]:'#e2dace', [T.WALL]:'#7f8c8d', [T.DESK]:'#b08050', [T.MONITOR]:'#2c3e50',
+    [T.CARPET]:'#5b7fa5', [T.CORRIDOR]:'#d4cec2', [T.DOOR]:'#a0724a', [T.WINDOW]:'#85c1e9',
+    [T.PLANT]:'#27ae60', [T.PANTRY_FLOOR]:'#f0e6d3', [T.COUNTER]:'#95a5a6', [T.FRIDGE]:'#ecf0f1',
+    [T.COFFEE]:'#2c3e50', [T.CHAIR]:'#4a4a5e', [T.WHITEBOARD]:'#ecf0f1', [T.SOFA]:'#8e44ad', [T.TABLE]:'#b08050',
+  };
   for (let r=0;r<MAP_ROWS;r++) for (let c=0;c<MAP_COLS;c++) {
-    const t=MAP[r][c];
-    ctx.fillStyle = t===0?'#4a7c59':t===1?'#5c5c6e':t===2?'#2e7d32':t===3?'#78909c':t===4?'#2980b9':t===5?'#4a7c59':t===6?'#8B7355':'#4a7c59';
+    ctx.fillStyle = mmColors[MAP[r][c]] || '#d4cec2';
     ctx.fillRect(mx+c*(mw/MAP_COLS), my+r*(mh/MAP_ROWS), mw/MAP_COLS+.5, mh/MAP_ROWS+.5);
   }
   // chest dots
