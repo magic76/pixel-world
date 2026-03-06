@@ -473,11 +473,12 @@ function generateMap(seed) {
     for (let r=r1;r<=r2;r++) { if(c1>=0) map[r][c1]=T.WALL; if(c2<MAP_COLS) map[r][c2]=T.WALL; }
   }
 
-  // ═══ TOP-LEFT: Whiteboard area ═══
-  const wbTop = 2, wbBot = 10;
+  // ═══ LEFT-CENTER: Whiteboard area ═══
+  const wbMid = Math.floor(MAP_ROWS / 2);
+  const wbTop = wbMid - 4, wbBot = wbMid + 4;
   for (let r = wbTop; r <= wbBot; r++) map[r][1] = T.WHITEBOARD;
   for (let r = wbTop+1; r <= wbBot-1; r += 2) { map[r][4] = T.CHAIR; map[r][5] = T.CHAIR; }
-  map[2][8] = T.PLANT; map[wbBot][8] = T.PLANT;
+  map[wbTop-1][3] = T.PLANT; map[wbBot+1][3] = T.PLANT;
   roomLabels.push({ x: 3*TILE, y: (wbTop-1)*TILE+TILE/2, label: 'Whiteboard', type: 'whiteboard' });
 
   // ═══ TOP-RIGHT: Meeting room (walled, 4 seats) ═══
@@ -598,7 +599,8 @@ const WB_MAX_ENTRIES = 20;
 const WB_INTERACT_RANGE = 60;
 let whiteboardEntries = []; // { type:'text'|'image', content:string, name:string }
 const wbImageCache = {}; // data url -> Image object
-const wbArea = { r1: 2, r2: 10, c: 1 };
+const wbMidRow = Math.floor(MAP_ROWS / 2);
+const wbArea = { r1: wbMidRow - 4, r2: wbMidRow + 4, c: 1 };
 
 function isNearWhiteboard(px, py) {
   const wbX = wbArea.c * TILE + TILE/2;
