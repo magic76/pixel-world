@@ -270,6 +270,45 @@
   .action-btn.btn-atk { border-color: rgba(233,69,96,0.4); }
   .action-btn.btn-chat { border-color: rgba(83,215,105,0.4); }
   .action-row { display: flex; gap: min(3vw, 12px); }
+
+  /* Whiteboard Modal */
+  #wb-modal {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center;
+  }
+  #wb-modal.open { display: flex; }
+  #wb-modal-box {
+    background: #16213e; border: 2px solid #0f3460; border-radius: 14px;
+    padding: 20px 24px; width: 420px; max-width: 92vw;
+  }
+  #wb-modal-box h3 { margin: 0 0 12px; color: #ecf0f1; font-size: 16px; }
+  #wb-text-input {
+    width: 100%; padding: 10px 14px; border-radius: 10px;
+    border: 2px solid #0f3460; background: #1a1a2e; color: #e0e0e0;
+    font-size: 14px; outline: none; margin-bottom: 10px;
+  }
+  #wb-text-input:focus { border-color: #e94560; }
+  #wb-paste-area {
+    width: 100%; min-height: 80px; border: 2px dashed #0f3460;
+    border-radius: 10px; background: #1a1a2e; color: #556;
+    font-size: 13px; display: flex; align-items: center; justify-content: center;
+    margin-bottom: 12px; cursor: pointer; position: relative; overflow: hidden;
+    text-align: center; padding: 10px;
+  }
+  #wb-paste-area.has-image { border-color: #53d769; }
+  #wb-paste-area img {
+    max-width: 100%; max-height: 120px; border-radius: 6px;
+  }
+  .wb-btn-row { display: flex; gap: 8px; justify-content: flex-end; }
+  .wb-btn {
+    padding: 8px 18px; border-radius: 8px; border: none;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .wb-btn-send { background: #e94560; color: #fff; }
+  .wb-btn-send:hover { background: #d63b54; }
+  .wb-btn-cancel { background: #0f3460; color: #e0e0e0; }
+  .wb-btn-cancel:hover { background: #1a4a80; }
 </style>
 </head>
 <body>
@@ -351,6 +390,18 @@
     <button class="emote-btn" onclick="sendEmote('⭕')" title="O">⭕</button>
     <button class="emote-btn" onclick="sendEmote('❌')" title="X">❌</button>
     <input id="chat-input" type="text" placeholder="Type message, Enter to send..." maxlength="100">
+  </div>
+</div>
+
+<div id="wb-modal">
+  <div id="wb-modal-box">
+    <h3>📋 Write on Whiteboard</h3>
+    <input id="wb-text-input" type="text" placeholder="Type a message..." maxlength="60" autocomplete="off">
+    <div id="wb-paste-area" tabindex="0">Ctrl+V / Cmd+V to paste screenshot</div>
+    <div class="wb-btn-row">
+      <button class="wb-btn wb-btn-cancel" onclick="closeWhiteboardModal()">Cancel</button>
+      <button class="wb-btn wb-btn-send" onclick="submitWhiteboard()">Send</button>
+    </div>
   </div>
 </div>
 
@@ -543,10 +594,11 @@ function generateChests(seed) {
 }
 
 // ─── Whiteboard ───
-const WB_MAX_LINES = 20;
+const WB_MAX_ENTRIES = 20;
 const WB_INTERACT_RANGE = 60;
-let whiteboardLines = []; // shared whiteboard text, max 20 lines
-const wbArea = { r1: 2, r2: 10, c: 1 }; // whiteboard tile positions
+let whiteboardEntries = []; // { type:'text'|'image', content:string, name:string }
+const wbImageCache = {}; // data url -> Image object
+const wbArea = { r1: 2, r2: 10, c: 1 };
 
 function isNearWhiteboard(px, py) {
   const wbX = wbArea.c * TILE + TILE/2;
@@ -555,13 +607,90 @@ function isNearWhiteboard(px, py) {
   return Math.sqrt(dx*dx + dy*dy) < WB_INTERACT_RANGE * 2;
 }
 
-function writeToWhiteboard(text) {
-  if (!text.trim()) return;
+function addWhiteboardEntry(entry) {
+  whiteboardEntries.push(entry);
+  if (whiteboardEntries.length > WB_MAX_ENTRIES) whiteboardEntries.shift();
+  broadcast({ type: 'wb_write', entries: whiteboardEntries });
+}
+
+let wbPendingImage = null;
+
+function openWhiteboardModal() {
+  wbPendingImage = null;
+  const modal = document.getElementById('wb-modal');
+  const input = document.getElementById('wb-text-input');
+  const pasteArea = document.getElementById('wb-paste-area');
+  pasteArea.innerHTML = 'Ctrl+V / Cmd+V to paste screenshot';
+  pasteArea.classList.remove('has-image');
+  input.value = '';
+  modal.classList.add('open');
+  input.focus();
+}
+
+function closeWhiteboardModal() {
+  document.getElementById('wb-modal').classList.remove('open');
+  wbPendingImage = null;
+}
+
+function submitWhiteboard() {
+  const text = document.getElementById('wb-text-input').value.trim();
   const name = nameInput.value || 'Player';
-  const line = name + ': ' + text.trim();
-  whiteboardLines.push(line);
-  if (whiteboardLines.length > WB_MAX_LINES) whiteboardLines.shift();
-  broadcast({ type: 'wb_write', lines: whiteboardLines });
+  if (wbPendingImage) {
+    addWhiteboardEntry({ type: 'image', content: wbPendingImage, name });
+  }
+  if (text) {
+    addWhiteboardEntry({ type: 'text', content: name + ': ' + text, name });
+  }
+  closeWhiteboardModal();
+}
+
+// paste handler for whiteboard modal
+document.addEventListener('paste', e => {
+  if (!document.getElementById('wb-modal').classList.contains('open')) return;
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const blob = item.getAsFile();
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          // resize to fit whiteboard (max 200x120)
+          const maxW = 200, maxH = 120;
+          let w = img.width, h = img.height;
+          if (w > maxW) { h = h * maxW / w; w = maxW; }
+          if (h > maxH) { w = w * maxH / h; h = maxH; }
+          const c = document.createElement('canvas');
+          c.width = Math.round(w); c.height = Math.round(h);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          wbPendingImage = c.toDataURL('image/jpeg', 0.5);
+          const pasteArea = document.getElementById('wb-paste-area');
+          pasteArea.innerHTML = '<img src="' + wbPendingImage + '">';
+          pasteArea.classList.add('has-image');
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(blob);
+      break;
+    }
+  }
+});
+
+// enter to submit in whiteboard modal
+document.getElementById('wb-text-input').addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { submitWhiteboard(); e.preventDefault(); }
+  else if (e.key === 'Escape') { closeWhiteboardModal(); }
+});
+
+function loadWbImage(dataUrl) {
+  if (wbImageCache[dataUrl]) return wbImageCache[dataUrl];
+  const img = new Image();
+  img.src = dataUrl;
+  wbImageCache[dataUrl] = img;
+  return img;
 }
 
 const NUM_CARS = 4;
@@ -613,7 +742,7 @@ const myPlayer = {
   x: MAP_W/2, y: MAP_H/2,
   dir: 0, frame: 0, walking: false,
   color: COLORS[Math.floor(Math.random() * COLORS.length)],
-  name: '', chat: '', chatTime: 0,
+  name: '', chat: '', chatTime: 0, chatImage: '', chatImageTime: 0,
   emote: '', emoteTime: 0,
   hp: MAX_HP, ghostUntil: 0,
   carId: -1,
@@ -871,7 +1000,7 @@ function setupPeerListeners(targetHostId) {
         hostPlayer: getMyState(),
         players: getRemotePlayerStates(),
         peers: Object.keys(connections).filter(i => i !== pid),
-        cars, chests, whiteboardLines,
+        cars, chests, whiteboardEntries,
         knownPeerIds,
       });
       updateOnlineCount(); updatePlayerList();
@@ -961,7 +1090,8 @@ function handleData(fromId, data) {
       mapSeed = data.mapSeed; MAP = generateMap(mapSeed);
       cars = data.cars || generateCars(mapSeed);
       chests = data.chests || generateChests(mapSeed);
-      if (data.whiteboardLines) whiteboardLines = data.whiteboardLines;
+      if (data.whiteboardEntries) whiteboardEntries = data.whiteboardEntries;
+      else if (data.whiteboardLines) whiteboardEntries = data.whiteboardLines.map(l => ({ type:'text', content:l, name:'' }));
       if (data.knownPeerIds) for (const pid of data.knownPeerIds) if (!knownPeerIds.includes(pid)) knownPeerIds.push(pid);
       if (data.hostPlayer) remotePlayers[fromId] = makeRemote(data.hostPlayer, fromId);
       if (data.players) for (const [pid, ps] of Object.entries(data.players)) remotePlayers[pid] = makeRemote(ps, pid);
@@ -1006,6 +1136,9 @@ function handleData(fromId, data) {
     }
     case 'chat':
       if (remotePlayers[fromId]) { remotePlayers[fromId].chat = data.text; remotePlayers[fromId].chatTime = Date.now(); }
+      break;
+    case 'chatImage':
+      if (remotePlayers[fromId]) { remotePlayers[fromId].chatImage = data.image; remotePlayers[fromId].chatImageTime = Date.now(); }
       break;
     case 'emote':
       if (remotePlayers[fromId]) { remotePlayers[fromId].emote = data.emote; remotePlayers[fromId].emoteTime = Date.now(); }
@@ -1079,7 +1212,8 @@ function handleData(fromId, data) {
       if (remotePlayers[fromId]) remotePlayers[fromId].equips = data.equips || [];
       break;
     case 'wb_write':
-      if (data.lines) whiteboardLines = data.lines.slice(-WB_MAX_LINES);
+      if (data.entries) whiteboardEntries = data.entries.slice(-WB_MAX_ENTRIES);
+      else if (data.lines) whiteboardEntries = data.lines.map(l => ({ type:'text', content:l, name:'' }));
       break;
     case 'player_left':
       if (data.peerId && remotePlayers[data.peerId]) {
@@ -1094,7 +1228,7 @@ function handleData(fromId, data) {
 
 function makeRemote(p, pid) {
   if (p.avatar && pid) loadRemoteAvatar(pid, p.avatar);
-  return { ...p, targetX: p.x, targetY: p.y, hp: p.hp ?? MAX_HP, ghostUntil: p.ghostUntil ?? 0, voiceOn: false, emote: '', emoteTime: 0, equips: p.equips || [] };
+  return { ...p, targetX: p.x, targetY: p.y, hp: p.hp ?? MAX_HP, ghostUntil: p.ghostUntil ?? 0, voiceOn: false, emote: '', emoteTime: 0, chatImage: '', chatImageTime: 0, equips: p.equips || [] };
 }
 
 function connectToPeer(tid) {
@@ -1255,8 +1389,7 @@ function addChestEffect(x, y) {
 }
 
 function openWhiteboardInput() {
-  const text = prompt('Write on whiteboard:');
-  if (text) writeToWhiteboard(text);
+  openWhiteboardModal();
 }
 
 function getAttackBox(x, y, dir) {
@@ -1287,11 +1420,53 @@ chatInput.addEventListener('keydown', e => {
   }
 });
 
+const chatImageCache = {};
+function loadChatImage(dataUrl) {
+  if (chatImageCache[dataUrl]) return chatImageCache[dataUrl];
+  const img = new Image();
+  img.src = dataUrl;
+  chatImageCache[dataUrl] = img;
+  return img;
+}
+
+chatInput.addEventListener('paste', e => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const blob = item.getAsFile();
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const maxW = 160, maxH = 100;
+          let w = img.width, h = img.height;
+          if (w > maxW) { h = h * maxW / w; w = maxW; }
+          if (h > maxH) { w = w * maxH / h; h = maxH; }
+          const c = document.createElement('canvas');
+          c.width = Math.round(w); c.height = Math.round(h);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          const dataUrl = c.toDataURL('image/jpeg', 0.45);
+          myPlayer.chatImage = dataUrl;
+          myPlayer.chatImageTime = Date.now();
+          broadcast({ type:'chatImage', image: dataUrl });
+          chatInput.value = ''; chatInput.blur(); chatInput.classList.remove('visible');
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(blob);
+      break;
+    }
+  }
+});
+
 nameInput.addEventListener('keydown', e => e.stopPropagation());
 nameInput.addEventListener('change', () => updatePlayerList());
 
 document.addEventListener('keydown', e => {
   if (chatFocused || !gameStarted) return;
+  if (document.getElementById('wb-modal').classList.contains('open')) return;
   const k = e.key;
   if (k.startsWith('Arrow') || 'wasdWASD'.includes(k)) {
     keys[k.toLowerCase()] = true;
@@ -1599,40 +1774,54 @@ function drawRoomLabels() {
 }
 
 function drawWhiteboardContent() {
-  if (whiteboardLines.length === 0) return;
+  if (whiteboardEntries.length === 0) return;
   const wbX = (wbArea.c + 1) * TILE + 4;
   const wbY = wbArea.r1 * TILE + 8;
   const wbW = 7 * TILE;
   const wbH = (wbArea.r2 - wbArea.r1 + 1) * TILE;
 
-  // large whiteboard panel
   ctx.fillStyle = 'rgba(236,240,241,0.95)';
   ctx.fillRect(wbX, wbY, wbW, wbH);
   ctx.strokeStyle = '#bdc3c7'; ctx.lineWidth = 2;
   ctx.strokeRect(wbX, wbY, wbW, wbH);
 
-  // title bar
   ctx.fillStyle = '#2c3e50';
   ctx.fillRect(wbX, wbY, wbW, 16);
   ctx.fillStyle = '#ecf0f1';
   ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
   ctx.fillText('📋 Whiteboard', wbX + 4, wbY + 11);
 
-  // lines of text
-  ctx.font = '10px monospace';
-  ctx.fillStyle = '#2c3e50';
-  const lineH = (wbH - 20) / WB_MAX_LINES;
-  for (let i = 0; i < whiteboardLines.length; i++) {
-    const txt = whiteboardLines[i];
-    const ty = wbY + 20 + i * lineH + lineH * 0.7;
-    ctx.fillText(txt.substring(0, 30), wbX + 4, ty);
+  let curY = wbY + 20;
+  const maxY = wbY + wbH - 4;
+  for (let i = 0; i < whiteboardEntries.length && curY < maxY; i++) {
+    const entry = whiteboardEntries[i];
+    if (entry.type === 'image') {
+      const img = loadWbImage(entry.content);
+      if (img.complete && img.naturalWidth) {
+        let w = img.naturalWidth, h = img.naturalHeight;
+        const fitW = wbW - 8, fitH = 50;
+        if (w > fitW) { h = h * fitW / w; w = fitW; }
+        if (h > fitH) { w = w * fitH / h; h = fitH; }
+        if (curY + h + 2 > maxY) break;
+        if (entry.name) {
+          ctx.font = '8px sans-serif'; ctx.fillStyle = '#7f8c8d';
+          ctx.fillText(entry.name + ':', wbX + 4, curY + 7);
+          curY += 10;
+        }
+        ctx.drawImage(img, wbX + 4, curY, Math.round(w), Math.round(h));
+        curY += Math.round(h) + 4;
+      }
+    } else {
+      ctx.font = '10px monospace'; ctx.fillStyle = '#2c3e50';
+      ctx.fillText((entry.content || '').substring(0, 30), wbX + 4, curY + 9);
+      curY += 13;
+    }
   }
 
-  // hint
   if (isNearWhiteboard(myPlayer.x, myPlayer.y)) {
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Press SPACE to write', wbX + wbW/2, wbY + wbH + 14);
+    ctx.fillText('Press SPACE to write / paste image', wbX + wbW/2, wbY + wbH + 14);
   }
 }
 
@@ -1972,7 +2161,12 @@ function drawCharacter(p, isMe) {
       ctx.font = `${Math.round(28*(et<0.15?0.5+et/0.15*0.5:1))}px sans-serif`;
       ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(p.emote, x, y-60-et*20); ctx.restore();
     }
-    if (p.chat && Date.now()-p.chatTime < CHAT_DURATION) drawChatBubble(x, y-50, p.chat, Math.min(1,(1-(Date.now()-p.chatTime)/CHAT_DURATION)*3));
+    if (p.chatImage && Date.now()-p.chatImageTime < IMG_CHAT_DURATION) {
+      const rem = 1-(Date.now()-p.chatImageTime)/IMG_CHAT_DURATION;
+      drawImageBubble(x, y-50, p.chatImage, Math.min(1, rem*3));
+    } else if (p.chat && Date.now()-p.chatTime < CHAT_DURATION) {
+      drawChatBubble(x, y-50, p.chat, Math.min(1,(1-(Date.now()-p.chatTime)/CHAT_DURATION)*3));
+    }
     return;
   }
 
@@ -2072,8 +2266,11 @@ function drawCharacter(p, isMe) {
     ctx.restore();
   }
 
-  // chat bubble
-  if (p.chat && Date.now()-p.chatTime < CHAT_DURATION) {
+  // chat bubble (image takes priority)
+  if (p.chatImage && Date.now()-p.chatImageTime < IMG_CHAT_DURATION) {
+    const rem = 1 - (Date.now()-p.chatImageTime)/IMG_CHAT_DURATION;
+    drawImageBubble(x, y-58, p.chatImage, Math.min(1, rem*3));
+  } else if (p.chat && Date.now()-p.chatTime < CHAT_DURATION) {
     const rem = 1 - (Date.now()-p.chatTime)/CHAT_DURATION;
     drawChatBubble(x, y-58, p.chat, Math.min(1, rem*3));
   }
@@ -2094,6 +2291,35 @@ function drawChatBubble(x, y, text, alpha) {
   ctx.beginPath(); ctx.moveTo(x-5,by+ph); ctx.lineTo(x,by+ph+7); ctx.lineTo(x+5,by+ph); ctx.fill();
   ctx.fillStyle = '#222'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(text, x, by+ph/2);
+  ctx.restore();
+}
+
+const IMG_CHAT_DURATION = 8000;
+function drawImageBubble(x, y, dataUrl, alpha) {
+  const img = loadChatImage(dataUrl);
+  if (!img.complete || !img.naturalWidth) return;
+  let w = img.naturalWidth, h = img.naturalHeight;
+  const maxW = 120, maxH = 80;
+  if (w > maxW) { h = h * maxW / w; w = maxW; }
+  if (h > maxH) { w = w * maxH / h; h = maxH; }
+  w = Math.round(w); h = Math.round(h);
+  const pad = 6, r = 8;
+  const pw = w + pad*2, ph = h + pad*2;
+  const bx = x - pw/2, by = y - ph - 10;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(bx+r, by); ctx.lineTo(bx+pw-r, by);
+  ctx.quadraticCurveTo(bx+pw, by, bx+pw, by+r); ctx.lineTo(bx+pw, by+ph-r);
+  ctx.quadraticCurveTo(bx+pw, by+ph, bx+pw-r, by+ph); ctx.lineTo(bx+r, by+ph);
+  ctx.quadraticCurveTo(bx, by+ph, bx, by+ph-r); ctx.lineTo(bx, by+r);
+  ctx.quadraticCurveTo(bx, by, bx+r, by);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x-5, by+ph); ctx.lineTo(x, by+ph+7); ctx.lineTo(x+5, by+ph);
+  ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.drawImage(img, bx+pad, by+pad, w, h);
   ctx.restore();
 }
 
