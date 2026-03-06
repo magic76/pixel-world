@@ -881,6 +881,7 @@ function openWardrobeMenu() {
   AVATAR_CHOICES.forEach((a, i) => menu += (i+11) + '. ' + a + '\n');
   menu += '\n0 = Remove outfit\nEnter number:';
   const pick = prompt(menu);
+  clearKeys();
   if (!pick) return;
   const n = parseInt(pick);
   if (n === 0) {
@@ -1159,6 +1160,7 @@ function joinRPS(challengerId) {
 
 function showRPSPicker() {
   const pick = prompt('Choose: 1=✊Rock, 2=✋Paper, 3=✌️Scissors');
+  clearKeys();
   const idx = parseInt(pick) - 1;
   if (idx < 0 || idx > 2) { notify('Invalid choice'); return; }
   const move = RPS_MOVES[idx];
@@ -1196,6 +1198,7 @@ function isNearVoteBoard(px, py) {
 
 function startVote() {
   const q = prompt('Enter vote question:');
+  clearKeys();
   if (!q || !q.trim()) return;
   voteState = { question: q.trim(), yes: 0, no: 0, voters: [myId], active: true, startTime: Date.now() };
   broadcast({ type: 'vote_start', question: voteState.question, from: myId });
@@ -1361,6 +1364,7 @@ const myPlayer = {
 
 const remotePlayers = {};
 const keys = {};
+function clearKeys() { for (const k in keys) keys[k] = false; }
 let camX = 0, camY = 0, animTick = 0, gameStarted = false;
 
 let micEnabled = false, localStream = null;
@@ -1859,6 +1863,7 @@ function handleData(fromId, data) {
         rpsState.active = true; rpsState.challenger = data.from;
         rpsState.opponent = myId;
         const accept = confirm('✊✋✌️ ' + (remotePlayers[data.from]?.name||'Someone') + ' challenges you to RPS!');
+        clearKeys();
         if (accept) { broadcast({ type: 'rps_accept', from: myId, challenger: data.from }); showRPSPicker(); }
         else { rpsState.active = false; }
       }
@@ -1978,6 +1983,7 @@ function startFollowing(pid) {
 
 function promptPM(pid) {
   const text = prompt('Private message to ' + (remotePlayers[pid]?.name||'player') + ':');
+  clearKeys();
   if (text && text.trim()) sendPM(pid, text.trim());
 }
 
@@ -2047,6 +2053,7 @@ function performAttack() {
       broadcast({ type: 'boss_drop', item: drop, from: myId });
       setTimeout(() => {
         const newName = prompt('You defeated the Boss! Give the Boss a new name:');
+        clearKeys();
         if (newName && newName.trim()) {
           bossName = newName.trim();
           broadcast({ type: 'boss_name', name: bossName });
@@ -3678,8 +3685,8 @@ function drawCharacter(p, isMe) {
   const avatarImg = isMe ? myAvatarImg : (p._pid && remoteAvatarImgs[p._pid]);
   const chosenAv = isMe ? myChosenAvatar : (p.chosenAvatar || null);
   if (chosenAv) {
-    ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(chosenAv, x, y-18);
+    ctx.font = '20px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(chosenAv, x, y-12);
   } else if (avatarImg && avatarImg.complete && avatarImg.naturalWidth > 0) {
     ctx.save();
     ctx.beginPath(); ctx.arc(x, y-17, 11, 0, Math.PI*2); ctx.closePath(); ctx.clip();
