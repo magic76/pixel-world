@@ -309,6 +309,42 @@
   .wb-btn-send:hover { background: #d63b54; }
   .wb-btn-cancel { background: #0f3460; color: #e0e0e0; }
   .wb-btn-cancel:hover { background: #1a4a80; }
+
+  /* Whiteboard Zoom Overlay */
+  #wb-zoom {
+    display: none; position: fixed; inset: 0; z-index: 250;
+    background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+    align-items: center; justify-content: center; cursor: pointer;
+  }
+  #wb-zoom.open { display: flex; }
+  #wb-zoom-box {
+    background: #ecf0f1; border-radius: 14px; padding: 0;
+    width: 90vw; max-width: 700px; max-height: 88vh;
+    overflow-y: auto; box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    cursor: default;
+  }
+  #wb-zoom-header {
+    background: #2c3e50; color: #ecf0f1; padding: 12px 20px;
+    font-size: 16px; font-weight: 700; border-radius: 14px 14px 0 0;
+    display: flex; justify-content: space-between; align-items: center;
+    position: sticky; top: 0; z-index: 1;
+  }
+  #wb-zoom-close {
+    background: #e94560; border: none; color: #fff; width: 28px; height: 28px;
+    border-radius: 50%; font-size: 16px; cursor: pointer; line-height: 1;
+  }
+  #wb-zoom-close:hover { background: #d63b54; }
+  #wb-zoom-body { padding: 16px 20px; }
+  .wb-zoom-entry { margin-bottom: 10px; }
+  .wb-zoom-entry.text {
+    font: 14px/1.5 monospace; color: #2c3e50; word-break: break-all;
+  }
+  .wb-zoom-entry.image img {
+    max-width: 100%; border-radius: 8px; display: block;
+  }
+  .wb-zoom-entry .wb-zoom-name {
+    font-size: 11px; color: #7f8c8d; margin-bottom: 2px;
+  }
 </style>
 </head>
 <body>
@@ -390,6 +426,16 @@
     <button class="emote-btn" onclick="sendEmote('⭕')" title="O">⭕</button>
     <button class="emote-btn" onclick="sendEmote('❌')" title="X">❌</button>
     <input id="chat-input" type="text" placeholder="Type message, Enter to send..." maxlength="100">
+  </div>
+</div>
+
+<div id="wb-zoom" onclick="if(event.target===this)closeWhiteboardZoom()">
+  <div id="wb-zoom-box">
+    <div id="wb-zoom-header">
+      <span>📋 Whiteboard</span>
+      <button id="wb-zoom-close" onclick="closeWhiteboardZoom()">&times;</button>
+    </div>
+    <div id="wb-zoom-body"></div>
   </div>
 </div>
 
@@ -1468,6 +1514,10 @@ nameInput.addEventListener('change', () => updatePlayerList());
 
 document.addEventListener('keydown', e => {
   if (chatFocused || !gameStarted) return;
+  if (document.getElementById('wb-zoom').classList.contains('open')) {
+    if (e.key === 'Escape') closeWhiteboardZoom();
+    return;
+  }
   if (document.getElementById('wb-modal').classList.contains('open')) return;
   const k = e.key;
   if (k.startsWith('Arrow') || 'wasdWASD'.includes(k)) {
@@ -1776,56 +1826,121 @@ function drawRoomLabels() {
 }
 
 function drawWhiteboardContent() {
-  if (whiteboardEntries.length === 0) return;
+  const near = isNearWhiteboard(myPlayer.x, myPlayer.y);
   const wbX = (wbArea.c + 1) * TILE + 4;
-  const wbY = wbArea.r1 * TILE + 8;
-  const wbW = 7 * TILE;
-  const wbH = (wbArea.r2 - wbArea.r1 + 1) * TILE;
+  const wbYmid = ((wbArea.r1 + wbArea.r2) / 2) * TILE;
+  const wbW = 12 * TILE;
+  const wbH = 11 * TILE;
+  const wbY = wbYmid - wbH / 2;
+  drawWhiteboardContent._bounds = near ? { x: wbX, y: wbY, w: wbW, h: wbH } : null;
 
-  ctx.fillStyle = 'rgba(236,240,241,0.95)';
+  if (!near) return;
+
+  ctx.fillStyle = 'rgba(236,240,241,0.97)';
   ctx.fillRect(wbX, wbY, wbW, wbH);
-  ctx.strokeStyle = '#bdc3c7'; ctx.lineWidth = 2;
+  ctx.strokeStyle = '#95a5a6'; ctx.lineWidth = 2;
   ctx.strokeRect(wbX, wbY, wbW, wbH);
 
+  const headerH = 22;
   ctx.fillStyle = '#2c3e50';
-  ctx.fillRect(wbX, wbY, wbW, 16);
+  ctx.fillRect(wbX, wbY, wbW, headerH);
   ctx.fillStyle = '#ecf0f1';
-  ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText('📋 Whiteboard', wbX + 4, wbY + 11);
+  ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('📋 Whiteboard', wbX + 8, wbY + 15);
+  ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.fillStyle = '#bdc3c7';
+  ctx.fillText('🔍 click to zoom', wbX + wbW - 8, wbY + 15);
 
-  let curY = wbY + 20;
-  const maxY = wbY + wbH - 4;
+  let curY = wbY + headerH + 6;
+  const maxY = wbY + wbH - 6;
+  const pad = 8;
   for (let i = 0; i < whiteboardEntries.length && curY < maxY; i++) {
     const entry = whiteboardEntries[i];
     if (entry.type === 'image') {
       const img = loadWbImage(entry.content);
       if (img.complete && img.naturalWidth) {
         let w = img.naturalWidth, h = img.naturalHeight;
-        const fitW = wbW - 8, fitH = 50;
+        const fitW = wbW - pad * 2, fitH = 80;
         if (w > fitW) { h = h * fitW / w; w = fitW; }
         if (h > fitH) { w = w * fitH / h; h = fitH; }
-        if (curY + h + 2 > maxY) break;
+        if (curY + h + 4 > maxY) break;
         if (entry.name) {
-          ctx.font = '8px sans-serif'; ctx.fillStyle = '#7f8c8d';
-          ctx.fillText(entry.name + ':', wbX + 4, curY + 7);
-          curY += 10;
+          ctx.font = '10px sans-serif'; ctx.fillStyle = '#7f8c8d';
+          ctx.fillText(entry.name + ':', wbX + pad, curY + 10);
+          curY += 14;
         }
-        ctx.drawImage(img, wbX + 4, curY, Math.round(w), Math.round(h));
-        curY += Math.round(h) + 4;
+        ctx.drawImage(img, wbX + pad, curY, Math.round(w), Math.round(h));
+        curY += Math.round(h) + 6;
       }
     } else {
-      ctx.font = '10px monospace'; ctx.fillStyle = '#2c3e50';
-      ctx.fillText((entry.content || '').substring(0, 30), wbX + 4, curY + 9);
-      curY += 13;
+      ctx.font = '13px monospace'; ctx.fillStyle = '#2c3e50'; ctx.textAlign = 'left';
+      ctx.fillText((entry.content || '').substring(0, 45), wbX + pad, curY + 12);
+      curY += 18;
     }
   }
 
-  if (isNearWhiteboard(myPlayer.x, myPlayer.y)) {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Press SPACE to write / paste image', wbX + wbW/2, wbY + wbH + 14);
+  if (whiteboardEntries.length === 0) {
+    ctx.fillStyle = '#bdc3c7'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Nothing here yet — press SPACE to write', wbX + wbW/2, wbY + wbH/2);
   }
+
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Press SPACE to write / paste image', wbX + wbW/2, wbY + wbH + 16);
 }
+
+function openWhiteboardZoom() {
+  const body = document.getElementById('wb-zoom-body');
+  body.innerHTML = '';
+  if (whiteboardEntries.length === 0) {
+    body.innerHTML = '<p style="color:#999;text-align:center;padding:30px">Nothing here yet</p>';
+  }
+  for (const entry of whiteboardEntries) {
+    const div = document.createElement('div');
+    div.className = 'wb-zoom-entry ' + entry.type;
+    if (entry.type === 'image') {
+      if (entry.name) {
+        const nm = document.createElement('div');
+        nm.className = 'wb-zoom-name';
+        nm.textContent = entry.name;
+        div.appendChild(nm);
+      }
+      const img = document.createElement('img');
+      img.src = entry.content;
+      div.appendChild(img);
+    } else {
+      div.textContent = entry.content || '';
+    }
+    body.appendChild(div);
+  }
+  document.getElementById('wb-zoom').classList.add('open');
+}
+
+function closeWhiteboardZoom() {
+  document.getElementById('wb-zoom').classList.remove('open');
+}
+
+function isMouseOverWhiteboard(e) {
+  const bounds = drawWhiteboardContent._bounds;
+  if (!bounds) return false;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const worldX = (e.clientX - rect.left) * scaleX + camX;
+  const worldY = (e.clientY - rect.top) * scaleY + camY;
+  return worldX >= bounds.x && worldX <= bounds.x + bounds.w &&
+         worldY >= bounds.y && worldY <= bounds.y + bounds.h;
+}
+
+canvas.addEventListener('click', e => {
+  if (!gameStarted) return;
+  if (document.getElementById('wb-modal').classList.contains('open')) return;
+  if (isMouseOverWhiteboard(e)) openWhiteboardZoom();
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!gameStarted) return;
+  canvas.style.cursor = isMouseOverWhiteboard(e) ? 'pointer' : 'default';
+});
 
 function drawCar(car) {
   const x = Math.round(car.x), y = Math.round(car.y);
