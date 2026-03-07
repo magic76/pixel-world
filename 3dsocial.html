@@ -121,31 +121,32 @@ canvas { display: block; }
 }
 #chat-toggle:hover { background: rgba(255,255,255,.15); }
 
-/* ── Virtual Joystick ── */
+/* ── Virtual Joystick (dynamic, left-half touch zone) ── */
 #joystick-zone {
-  position: fixed; right: 20px; top: 80px; z-index: 110;
-  width: 140px; height: 140px; display: none;
-  touch-action: none;
-}
-@media (max-width: 600px) {
-  #joystick-zone { width: 120px; height: 120px; right: 14px; top: 70px; }
+  position: fixed; left: 0; top: 0; width: 50vw; height: 100vh;
+  z-index: 105; display: none; touch-action: none;
 }
 #joystick-base {
-  position: absolute; inset: 0;
-  border-radius: 50%; border: 2px solid rgba(255,255,255,.15);
-  background: rgba(0,0,0,.2); backdrop-filter: blur(4px);
+  position: absolute; width: 130px; height: 130px;
+  border-radius: 50%; border: 2px solid rgba(255,255,255,.2);
+  background: rgba(0,0,0,.18); backdrop-filter: blur(4px);
+  pointer-events: none; display: none;
+  transform: translate(-50%, -50%);
 }
 #joystick-thumb {
-  position: absolute; width: 50px; height: 50px;
-  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  position: absolute; width: 48px; height: 48px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(167,139,250,.6), rgba(110,92,231,.35));
-  border: 2px solid rgba(255,255,255,.25);
-  box-shadow: 0 2px 12px rgba(110,92,231,.3);
-  transition: box-shadow .15s;
+  background: radial-gradient(circle, rgba(167,139,250,.65), rgba(110,92,231,.4));
+  border: 2px solid rgba(255,255,255,.3);
+  box-shadow: 0 2px 12px rgba(110,92,231,.35);
+  pointer-events: none; display: none;
+  transform: translate(-50%, -50%);
 }
-@media (max-width: 600px) {
-  #joystick-thumb { width: 42px; height: 42px; }
+
+/* ── Camera touch zone (right half, mobile) ── */
+#camera-touch-zone {
+  position: fixed; right: 0; top: 0; width: 50vw; height: 100vh;
+  z-index: 104; display: none; touch-action: none;
 }
 
 /* ── Image Preview Modal ── */
@@ -282,7 +283,8 @@ canvas { display: block; }
 <div id="action-bar" style="display:none">
   <button data-action="clap">👏 拍手</button>
   <button data-action="highfive">🙌 擊掌</button>
-  <button data-action="heart">💖 比愛心</button>
+  <button data-action="circle">⭕ O</button>
+  <button data-action="cross">❌ X</button>
   <button data-action="squat">🏋️ 蹲下</button>
   <button data-action="dance">💃 跳舞</button>
   <button data-action="wiggle">🍑 扭屁屁</button>
@@ -304,6 +306,9 @@ canvas { display: block; }
   <div id="joystick-base"></div>
   <div id="joystick-thumb"></div>
 </div>
+
+<!-- Camera touch zone (right half, mobile) -->
+<div id="camera-touch-zone"></div>
 
 <!-- Image Modal -->
 <div id="img-modal"><img id="modal-img"></div>
@@ -361,7 +366,7 @@ const COLORS = ['#6e5ce7','#e74c6e','#4ce7a0','#e7c94c','#4ca0e7','#e7844c','#c7
 const WHITEBOARD_POS = new THREE.Vector3(0, 0, -7.85);
 const WB_TRIGGER_DIST = 2.8;
 const MODEL_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/models/gltf/Xbot.glb';
-const ANIM_MAP = { clap: 'agree', highfive: 'agree', heart: 'sad_pose', squat: 'sneak_pose', dance: 'run', wiggle: 'headShake' };
+const ANIM_MAP = { clap: 'clap', highfive: 'highfive', circle: 'circle', cross: 'cross', squat: 'squat', dance: 'dance', wiggle: 'wiggle' };
 
 // ━━━ State ━━━
 let myName = '', myTitle = '', roomId = '';
@@ -438,14 +443,14 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.2;
+renderer.toneMappingExposure = 1.5;
 document.body.prepend(renderer.domElement);
 
 // ── Lights ──
-scene.add(new THREE.AmbientLight(0x404060, 0.6));
+scene.add(new THREE.AmbientLight(0x8888aa, 1.0));
 
-const dirLight = new THREE.DirectionalLight(0xfff0dd, 1.2);
-dirLight.position.set(5, 10, 5);
+const dirLight = new THREE.DirectionalLight(0xfff4e0, 1.8);
+dirLight.position.set(2, 12, 3);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
 dirLight.shadow.camera.near = 0.5;
@@ -456,12 +461,15 @@ dirLight.shadow.camera.top = 15;
 dirLight.shadow.camera.bottom = -15;
 scene.add(dirLight);
 
-const pl1 = new THREE.PointLight(0x6e5ce7, 0.6, 15);
-pl1.position.set(-4, 4, -4);
+const pl1 = new THREE.PointLight(0x6e5ce7, 1.0, 18);
+pl1.position.set(-4, 4.5, -4);
 scene.add(pl1);
-const pl2 = new THREE.PointLight(0x4ce7d8, 0.4, 15);
-pl2.position.set(4, 3, 2);
+const pl2 = new THREE.PointLight(0x4ce7d8, 0.8, 18);
+pl2.position.set(4, 4.5, 2);
 scene.add(pl2);
+const pl3 = new THREE.PointLight(0xfff0dd, 0.6, 20);
+pl3.position.set(0, 4.8, 0);
+scene.add(pl3);
 
 // ── Room ──
 const floor = new THREE.Mesh(
@@ -648,8 +656,252 @@ function createStool(x, z) {
 for (let i = -2; i <= 2; i++) createStool(i * 1.1, -1.6);
 for (let i = -2; i <= 2; i++) createStool(i * 1.1, -4.4);
 
+// ── Collision obstacles (AABB: minX, maxX, minZ, maxZ) ──
+const OBSTACLES = [];
+const PLAYER_RADIUS = 0.35;
+
+function addObstacleBox(cx, cz, halfW, halfD) {
+  OBSTACLES.push({ minX: cx - halfW, maxX: cx + halfW, minZ: cz - halfD, maxZ: cz + halfD });
+}
+
+// tables
+addObstacleBox(0, -3, 2.7, 1.2);
+addObstacleBox(-5, -3, 1.2, 0.8);
+addObstacleBox(5, -3, 1.2, 0.8);
+// whiteboard
+addObstacleBox(0, -7.85, 2.2, 0.3);
+// stools
+for (let i = -2; i <= 2; i++) {
+  addObstacleBox(i * 1.1, -1.6, 0.3, 0.3);
+  addObstacleBox(i * 1.1, -4.4, 0.3, 0.3);
+}
+// monitors (on table, treated as part of table collision)
+
+function collidesWithObstacle(px, pz) {
+  for (const ob of OBSTACLES) {
+    if (px + PLAYER_RADIUS > ob.minX && px - PLAYER_RADIUS < ob.maxX &&
+        pz + PLAYER_RADIUS > ob.minZ && pz - PLAYER_RADIUS < ob.maxZ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ━━━ 3D Character (Xbot.glb from Three.js examples) ━━━
 // Model faces +Z by default. Camera behind at -Z to show the back.
+
+// ── Build custom animation clips from idle rest pose ──
+function createActionClips(existingClips) {
+  const idleClip = existingClips.find(c => c.name === 'idle');
+  if (!idleClip) return [];
+
+  const DEG = Math.PI / 180;
+  const restQ = {}, restP = {};
+  for (const track of idleClip.tracks) {
+    const dotIdx = track.name.lastIndexOf('.');
+    const boneName = track.name.substring(0, dotIdx);
+    const prop = track.name.substring(dotIdx + 1);
+    if (prop === 'quaternion')
+      restQ[boneName] = new THREE.Quaternion(track.values[0], track.values[1], track.values[2], track.values[3]);
+    else if (prop === 'position')
+      restP[boneName] = new THREE.Vector3(track.values[0], track.values[1], track.values[2]);
+  }
+
+  let prefix = '';
+  for (const name in restQ) {
+    const idx = name.indexOf('Hips');
+    if (idx >= 0) { prefix = name.substring(0, idx); break; }
+  }
+  const B = n => prefix + n;
+
+  function rq(n) { return restQ[B(n)]?.clone() || new THREE.Quaternion(); }
+  function rp(n) { return restP[B(n)]?.clone() || new THREE.Vector3(); }
+
+  function dq(n, xd, yd, zd) {
+    const d = new THREE.Quaternion().setFromEuler(new THREE.Euler(xd * DEG, yd * DEG, zd * DEG));
+    return d.multiply(rq(n));
+  }
+  function dp(n, dx, dy, dz) {
+    const p = rp(n);
+    return new THREE.Vector3(p.x + dx, p.y + dy, p.z + dz);
+  }
+
+  function fq(...qs) { const a = []; for (const q of qs) a.push(q.x, q.y, q.z, q.w); return a; }
+  function fp(...vs) { const a = []; for (const v of vs) a.push(v.x, v.y, v.z); return a; }
+
+  function makeClip(name, dur, modTracks) {
+    const tracks = [];
+    const modNames = new Set(modTracks.map(t => t.name));
+    for (const t of idleClip.tracks) {
+      if (modNames.has(t.name)) continue;
+      const sz = t.getValueSize();
+      const rv = Array.from(t.values.slice(0, sz));
+      tracks.push(new t.constructor(t.name, [0, dur], [...rv, ...rv]));
+    }
+    tracks.push(...modTracks);
+    return new THREE.AnimationClip(name, dur, tracks);
+  }
+
+  const clips = [];
+
+  // CLAP: arms swing forward, forearms clap together
+  {
+    const d = 1.0, t = [0, 0.15, 0.3, 0.45, 0.6, 0.75, 1.0];
+    clips.push(makeClip('clap', d, [
+      new THREE.QuaternionKeyframeTrack(B('LeftArm') + '.quaternion', t, fq(
+        rq('LeftArm'), dq('LeftArm', -70, 0, -30), dq('LeftArm', -70, 0, -15),
+        dq('LeftArm', -70, 0, -30), dq('LeftArm', -70, 0, -15), dq('LeftArm', -70, 0, -30), rq('LeftArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightArm') + '.quaternion', t, fq(
+        rq('RightArm'), dq('RightArm', -70, 0, 30), dq('RightArm', -70, 0, 15),
+        dq('RightArm', -70, 0, 30), dq('RightArm', -70, 0, 15), dq('RightArm', -70, 0, 30), rq('RightArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('LeftForeArm') + '.quaternion', t, fq(
+        rq('LeftForeArm'), dq('LeftForeArm', 0, -80, 0), dq('LeftForeArm', 0, -50, 0),
+        dq('LeftForeArm', 0, -80, 0), dq('LeftForeArm', 0, -50, 0), dq('LeftForeArm', 0, -80, 0), rq('LeftForeArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightForeArm') + '.quaternion', t, fq(
+        rq('RightForeArm'), dq('RightForeArm', 0, 80, 0), dq('RightForeArm', 0, 50, 0),
+        dq('RightForeArm', 0, 80, 0), dq('RightForeArm', 0, 50, 0), dq('RightForeArm', 0, 80, 0), rq('RightForeArm')
+      )),
+    ]));
+  }
+
+  // HIGHFIVE: right arm raised high
+  {
+    const d = 1.5, t = [0, 0.4, 0.8, 1.2, 1.5];
+    clips.push(makeClip('highfive', d, [
+      new THREE.QuaternionKeyframeTrack(B('RightArm') + '.quaternion', t, fq(
+        rq('RightArm'), dq('RightArm', -10, 0, 150), dq('RightArm', -10, 0, 155),
+        dq('RightArm', -10, 0, 150), rq('RightArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightForeArm') + '.quaternion', t, fq(
+        rq('RightForeArm'), dq('RightForeArm', 0, 15, 0), dq('RightForeArm', 0, 10, 0),
+        dq('RightForeArm', 0, 15, 0), rq('RightForeArm')
+      )),
+    ]));
+  }
+
+  // CIRCLE (O): both arms raised forming a circle above head
+  {
+    const d = 1.5, t = [0, 0.4, 1.1, 1.5];
+    clips.push(makeClip('circle', d, [
+      new THREE.QuaternionKeyframeTrack(B('LeftArm') + '.quaternion', t, fq(
+        rq('LeftArm'), dq('LeftArm', -20, 0, -160), dq('LeftArm', -20, 0, -160), rq('LeftArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightArm') + '.quaternion', t, fq(
+        rq('RightArm'), dq('RightArm', -20, 0, 160), dq('RightArm', -20, 0, 160), rq('RightArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('LeftForeArm') + '.quaternion', t, fq(
+        rq('LeftForeArm'), dq('LeftForeArm', 0, -100, -40), dq('LeftForeArm', 0, -100, -40), rq('LeftForeArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightForeArm') + '.quaternion', t, fq(
+        rq('RightForeArm'), dq('RightForeArm', 0, 100, 40), dq('RightForeArm', 0, 100, 40), rq('RightForeArm')
+      )),
+    ]));
+  }
+
+  // CROSS (X): arms crossed in front forming an X
+  {
+    const d = 1.5, t = [0, 0.4, 1.1, 1.5];
+    clips.push(makeClip('cross', d, [
+      new THREE.QuaternionKeyframeTrack(B('LeftArm') + '.quaternion', t, fq(
+        rq('LeftArm'), dq('LeftArm', -70, 0, 30), dq('LeftArm', -70, 0, 30), rq('LeftArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightArm') + '.quaternion', t, fq(
+        rq('RightArm'), dq('RightArm', -70, 0, -30), dq('RightArm', -70, 0, -30), rq('RightArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('LeftForeArm') + '.quaternion', t, fq(
+        rq('LeftForeArm'), dq('LeftForeArm', -30, -60, 40), dq('LeftForeArm', -30, -60, 40), rq('LeftForeArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightForeArm') + '.quaternion', t, fq(
+        rq('RightForeArm'), dq('RightForeArm', -30, 60, -40), dq('RightForeArm', -30, 60, -40), rq('RightForeArm')
+      )),
+    ]));
+  }
+
+  // SQUAT: hips drop low, knees bend outward, feet stay on ground
+  {
+    const d = 1.2, t = [0, 0.3, 0.6, 0.9, 1.2];
+    clips.push(makeClip('squat', d, [
+      new THREE.VectorKeyframeTrack(B('Hips') + '.position', t, fp(
+        rp('Hips'), dp('Hips', 0, -0.55, 0.1), dp('Hips', 0, -0.55, 0.1), dp('Hips', 0, -0.55, 0.1), rp('Hips')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('LeftUpLeg') + '.quaternion', t, fq(
+        rq('LeftUpLeg'), dq('LeftUpLeg', 70, 0, 15), dq('LeftUpLeg', 70, 0, 15), dq('LeftUpLeg', 70, 0, 15), rq('LeftUpLeg')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightUpLeg') + '.quaternion', t, fq(
+        rq('RightUpLeg'), dq('RightUpLeg', 70, 0, -15), dq('RightUpLeg', 70, 0, -15), dq('RightUpLeg', 70, 0, -15), rq('RightUpLeg')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('LeftLeg') + '.quaternion', t, fq(
+        rq('LeftLeg'), dq('LeftLeg', -120, 0, 0), dq('LeftLeg', -120, 0, 0), dq('LeftLeg', -120, 0, 0), rq('LeftLeg')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightLeg') + '.quaternion', t, fq(
+        rq('RightLeg'), dq('RightLeg', -120, 0, 0), dq('RightLeg', -120, 0, 0), dq('RightLeg', -120, 0, 0), rq('RightLeg')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('Spine') + '.quaternion', t, fq(
+        rq('Spine'), dq('Spine', -15, 0, 0), dq('Spine', -15, 0, 0), dq('Spine', -15, 0, 0), rq('Spine')
+      )),
+    ]));
+  }
+
+  // DANCE: bouncy hips, twists, arm swings
+  {
+    const d = 1.5, t = [0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
+    clips.push(makeClip('dance', d, [
+      new THREE.VectorKeyframeTrack(B('Hips') + '.position', t, fp(
+        rp('Hips'), dp('Hips', 0.05, -0.1, 0), rp('Hips'), dp('Hips', -0.05, -0.1, 0),
+        rp('Hips'), dp('Hips', 0.05, -0.1, 0), rp('Hips')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('Hips') + '.quaternion', t, fq(
+        rq('Hips'), dq('Hips', 0, 20, 5), rq('Hips'), dq('Hips', 0, -20, -5),
+        rq('Hips'), dq('Hips', 0, 20, 5), rq('Hips')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('LeftArm') + '.quaternion', t, fq(
+        rq('LeftArm'), dq('LeftArm', -40, 0, -30), rq('LeftArm'), dq('LeftArm', 20, 0, 0),
+        rq('LeftArm'), dq('LeftArm', -40, 0, -30), rq('LeftArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightArm') + '.quaternion', t, fq(
+        rq('RightArm'), dq('RightArm', 20, 0, 0), rq('RightArm'), dq('RightArm', -40, 0, 30),
+        rq('RightArm'), dq('RightArm', 20, 0, 0), rq('RightArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('LeftForeArm') + '.quaternion', t, fq(
+        rq('LeftForeArm'), dq('LeftForeArm', 0, -60, 0), rq('LeftForeArm'), dq('LeftForeArm', 0, -30, 0),
+        rq('LeftForeArm'), dq('LeftForeArm', 0, -60, 0), rq('LeftForeArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('RightForeArm') + '.quaternion', t, fq(
+        rq('RightForeArm'), dq('RightForeArm', 0, 30, 0), rq('RightForeArm'), dq('RightForeArm', 0, 60, 0),
+        rq('RightForeArm'), dq('RightForeArm', 0, 30, 0), rq('RightForeArm')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('Spine') + '.quaternion', t, fq(
+        rq('Spine'), dq('Spine', 5, 15, 0), rq('Spine'), dq('Spine', 5, -15, 0),
+        rq('Spine'), dq('Spine', 5, 15, 0), rq('Spine')
+      )),
+    ]));
+  }
+
+  // WIGGLE: dramatic hip twist and sway
+  {
+    const d = 1.0, t = [0, 0.17, 0.33, 0.5, 0.67, 0.83, 1.0];
+    clips.push(makeClip('wiggle', d, [
+      new THREE.QuaternionKeyframeTrack(B('Hips') + '.quaternion', t, fq(
+        rq('Hips'), dq('Hips', 0, 35, 0), rq('Hips'), dq('Hips', 0, -35, 0),
+        rq('Hips'), dq('Hips', 0, 35, 0), rq('Hips')
+      )),
+      new THREE.VectorKeyframeTrack(B('Hips') + '.position', t, fp(
+        rp('Hips'), dp('Hips', 0.12, -0.05, 0), rp('Hips'), dp('Hips', -0.12, -0.05, 0),
+        rp('Hips'), dp('Hips', 0.12, -0.05, 0), rp('Hips')
+      )),
+      new THREE.QuaternionKeyframeTrack(B('Spine') + '.quaternion', t, fq(
+        rq('Spine'), dq('Spine', 10, -20, 0), rq('Spine'), dq('Spine', 10, 20, 0),
+        rq('Spine'), dq('Spine', 10, -20, 0), rq('Spine')
+      )),
+    ]));
+  }
+
+  console.log('Custom action clips created:', clips.map(c => c.name));
+  return clips;
+}
 
 // Load model eagerly
 const gltfLoader = new GLTFLoader();
@@ -659,6 +911,9 @@ btnEnter.textContent = '載入模型中...';
 gltfLoader.load(MODEL_URL, (gltf) => {
   modelTemplate = gltf.scene;
   modelAnimations = gltf.animations;
+  console.log('Model animations:', modelAnimations.map(c => c.name));
+  const customClips = createActionClips(modelAnimations);
+  modelAnimations.push(...customClips);
   btnEnter.disabled = false;
   btnEnter.textContent = '進入房間';
 }, undefined, (err) => {
@@ -754,16 +1009,25 @@ function updateParticles() {
   }
 }
 
-const ACTION_EMOJI = { clap: '👏', highfive: '🙌', heart: '💖', squat: '🏋️', dance: '💃', wiggle: '🍑' };
+const ACTION_EMOJI = { clap: '👏', highfive: '🙌', circle: '⭕', cross: '❌', squat: '🏋️', dance: '💃', wiggle: '🍑' };
 
 // ━━━ Local Player (created after model loads, in enterRoom) ━━━
 const myColor = COLORS[Math.floor(Math.random() * COLORS.length)];
 let localPlayer = null;
 
-// Camera behind character (model faces +Z, camera at -Z behind)
-const cameraOffset = new THREE.Vector3(0, 2.5, -4.5);
+// Camera behind character with orbit control
+const CAM_DIST = 4.5;
+const CAM_HEIGHT_BASE = 2.5;
+let cameraYaw = 0;   // horizontal orbit offset (radians)
+let cameraPitch = 0.15; // vertical angle (radians, 0 = level, positive = look down)
+const CAM_PITCH_MIN = -0.3;
+const CAM_PITCH_MAX = 1.0;
 let cameraTargetPos = new THREE.Vector3();
 let cameraTargetLook = new THREE.Vector3();
+const cameraTouchZone = document.getElementById('camera-touch-zone');
+let cameraTouchId = null;
+let cameraTouchLastX = 0, cameraTouchLastY = 0;
+let mouseDown = false;
 
 
 // ── Input ──
@@ -857,63 +1121,123 @@ chatToggle.addEventListener('click', () => {
   else chatInput.blur();
 });
 
-// ── Virtual Joystick ──
-function getJoystickCenter() {
-  const rect = joystickBase.getBoundingClientRect();
-  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, radius: rect.width / 2 };
+// ── Virtual Joystick (dynamic: appears at touch point, disappears on release) ──
+const JOYSTICK_RADIUS = 65;
+const JOYSTICK_MAX = JOYSTICK_RADIUS - 10;
+let joystickOriginX = 0, joystickOriginY = 0;
+
+function showJoystickAt(cx, cy) {
+  joystickBase.style.left = cx + 'px';
+  joystickBase.style.top = cy + 'px';
+  joystickBase.style.display = 'block';
+  joystickThumb.style.left = cx + 'px';
+  joystickThumb.style.top = cy + 'px';
+  joystickThumb.style.display = 'block';
+  joystickOriginX = cx;
+  joystickOriginY = cy;
 }
 
-function updateJoystickThumb(dx, dy) {
-  const { radius } = getJoystickCenter();
-  const maxDist = radius - 10;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  const clamped = Math.min(dist, maxDist);
-  const angle = Math.atan2(dy, dx);
-  const cx = clamped * Math.cos(angle);
-  const cy = clamped * Math.sin(angle);
-  joystickThumb.style.left = `calc(50% + ${cx}px)`;
-  joystickThumb.style.top = `calc(50% + ${cy}px)`;
-  joystickX = cx / maxDist;
-  joystickY = -cy / maxDist; // invert Y: up = positive (forward)
-}
-
-function resetJoystick() {
+function hideJoystick() {
   joystickActive = false;
   joystickTouchId = null;
   joystickX = 0;
   joystickY = 0;
-  joystickThumb.style.left = '50%';
-  joystickThumb.style.top = '50%';
+  joystickBase.style.display = 'none';
+  joystickThumb.style.display = 'none';
+}
+
+function moveJoystickThumb(tx, ty) {
+  const dx = tx - joystickOriginX;
+  const dy = ty - joystickOriginY;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const clamped = Math.min(dist, JOYSTICK_MAX);
+  const angle = Math.atan2(dy, dx);
+  const cx = clamped * Math.cos(angle);
+  const cy = clamped * Math.sin(angle);
+  joystickThumb.style.left = (joystickOriginX + cx) + 'px';
+  joystickThumb.style.top = (joystickOriginY + cy) + 'px';
+  joystickX = cx / JOYSTICK_MAX;
+  joystickY = -cy / JOYSTICK_MAX;
 }
 
 joystickZone.addEventListener('touchstart', e => {
+  if (joystickTouchId !== null) return;
   e.preventDefault();
   const t = e.changedTouches[0];
   joystickTouchId = t.identifier;
   joystickActive = true;
-  const c = getJoystickCenter();
-  updateJoystickThumb(t.clientX - c.x, t.clientY - c.y);
+  showJoystickAt(t.clientX, t.clientY);
 }, { passive: false });
 
 joystickZone.addEventListener('touchmove', e => {
   e.preventDefault();
   for (const t of e.changedTouches) {
     if (t.identifier === joystickTouchId) {
-      const c = getJoystickCenter();
-      updateJoystickThumb(t.clientX - c.x, t.clientY - c.y);
+      moveJoystickThumb(t.clientX, t.clientY);
     }
   }
 }, { passive: false });
 
 joystickZone.addEventListener('touchend', e => {
   for (const t of e.changedTouches) {
-    if (t.identifier === joystickTouchId) resetJoystick();
+    if (t.identifier === joystickTouchId) hideJoystick();
   }
 });
 
 joystickZone.addEventListener('touchcancel', e => {
   for (const t of e.changedTouches) {
-    if (t.identifier === joystickTouchId) resetJoystick();
+    if (t.identifier === joystickTouchId) hideJoystick();
+  }
+});
+
+// ── Camera control: mouse (desktop) + right-half touch (mobile) ──
+const CAM_SENSITIVITY = 0.003;
+const CAM_TOUCH_SENSITIVITY = 0.006;
+
+renderer.domElement.addEventListener('mousedown', e => {
+  if (e.button === 0 || e.button === 2) { mouseDown = true; }
+});
+window.addEventListener('mouseup', () => { mouseDown = false; });
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+renderer.domElement.addEventListener('mousemove', e => {
+  if (!mouseDown || !localPlayer) return;
+  cameraYaw -= e.movementX * CAM_SENSITIVITY;
+  cameraPitch += e.movementY * CAM_SENSITIVITY;
+  cameraPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, cameraPitch));
+});
+
+cameraTouchZone.addEventListener('touchstart', e => {
+  if (cameraTouchId !== null) return;
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  cameraTouchId = t.identifier;
+  cameraTouchLastX = t.clientX;
+  cameraTouchLastY = t.clientY;
+}, { passive: false });
+
+cameraTouchZone.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === cameraTouchId) {
+      const dx = t.clientX - cameraTouchLastX;
+      const dy = t.clientY - cameraTouchLastY;
+      cameraYaw -= dx * CAM_TOUCH_SENSITIVITY;
+      cameraPitch += dy * CAM_TOUCH_SENSITIVITY;
+      cameraPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, cameraPitch));
+      cameraTouchLastX = t.clientX;
+      cameraTouchLastY = t.clientY;
+    }
+  }
+}, { passive: false });
+
+cameraTouchZone.addEventListener('touchend', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === cameraTouchId) cameraTouchId = null;
+  }
+});
+cameraTouchZone.addEventListener('touchcancel', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === cameraTouchId) cameraTouchId = null;
   }
 });
 
@@ -1277,6 +1601,14 @@ function update() {
   // ── Movement (keyboard + joystick) ──
   let moving = false;
   if (!chatOpen && !whiteboardOpen && localPlayer) {
+    // reset camera when any direction key is pressed
+    const anyDirKey = keys['w'] || keys['arrowup'] || keys['s'] || keys['arrowdown'] ||
+                      keys['a'] || keys['arrowleft'] || keys['d'] || keys['arrowright'];
+    if (anyDirKey) {
+      cameraYaw *= 0.85;
+      cameraPitch += (0.15 - cameraPitch) * 0.15;
+      if (Math.abs(cameraYaw) < 0.005) cameraYaw = 0;
+    }
     // keyboard rotation
     if (keys['a'] || keys['arrowleft']) localPlayer.rotation.y += ROT_SPEED;
     if (keys['d'] || keys['arrowright']) localPlayer.rotation.y -= ROT_SPEED;
@@ -1301,13 +1633,25 @@ function update() {
         dir = 1;
         speed = joyBackward ? MOVE_SPEED * 0.6 * Math.min(Math.abs(joystickY), 1) : MOVE_SPEED * 0.6;
       }
-      localPlayer.position.x -= Math.sin(localPlayer.rotation.y) * speed * dir;
-      localPlayer.position.z -= Math.cos(localPlayer.rotation.y) * speed * dir;
+      const prevX = localPlayer.position.x;
+      const prevZ = localPlayer.position.z;
+      const dx = -Math.sin(localPlayer.rotation.y) * speed * dir;
+      const dz = -Math.cos(localPlayer.rotation.y) * speed * dir;
+      // try X axis
+      const newX = Math.max(-9, Math.min(9, prevX + dx));
+      if (!collidesWithObstacle(newX, prevZ)) {
+        localPlayer.position.x = newX;
+      }
+      // try Z axis
+      const newZ = Math.max(-7, Math.min(7, prevZ + dz));
+      if (!collidesWithObstacle(localPlayer.position.x, newZ)) {
+        localPlayer.position.z = newZ;
+      }
       moving = true;
     }
   }
 
-  // clamp to room bounds
+  // clamp to room bounds (safety)
   if (localPlayer) {
     localPlayer.position.x = Math.max(-9, Math.min(9, localPlayer.position.x));
     localPlayer.position.z = Math.max(-7, Math.min(7, localPlayer.position.z));
@@ -1351,14 +1695,20 @@ function update() {
     if (localPlayer.userData.mixer) localPlayer.userData.mixer.update(dt);
   }
 
-  // ── Camera ──
+  // ── Camera (orbit with yaw/pitch) ──
   if (!localPlayer) { renderer.render(scene, camera); return; }
-  const playerWorldPos = localPlayer.position.clone();
-  playerWorldPos.y = 0;
-  const offsetRotated = cameraOffset.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), localPlayer.rotation.y);
-  cameraTargetPos.copy(playerWorldPos).add(offsetRotated);
-  cameraTargetLook.copy(playerWorldPos).add(new THREE.Vector3(0, 1.2, 0));
-  camera.position.lerp(cameraTargetPos, 0.05);
+  const camAngle = localPlayer.rotation.y + cameraYaw;
+  const camHeight = CAM_HEIGHT_BASE + CAM_DIST * Math.sin(cameraPitch);
+  const camHoriz = CAM_DIST * Math.cos(cameraPitch);
+  const camOffX = -Math.sin(camAngle) * camHoriz;
+  const camOffZ = -Math.cos(camAngle) * camHoriz;
+  cameraTargetPos.set(
+    localPlayer.position.x + camOffX,
+    camHeight,
+    localPlayer.position.z + camOffZ
+  );
+  cameraTargetLook.set(localPlayer.position.x, 1.2, localPlayer.position.z);
+  camera.position.lerp(cameraTargetPos, 0.08);
   camera.lookAt(cameraTargetLook);
 
   // ── Remote players ──
@@ -1440,7 +1790,10 @@ function enterRoom() {
   peersCountEl.style.display = 'block';
   actionBar.style.display = 'flex';
   chatPanel.style.display = 'flex';
-  if (isTouchDevice) joystickZone.style.display = 'block';
+  if (isTouchDevice) {
+    joystickZone.style.display = 'block';
+    cameraTouchZone.style.display = 'block';
+  }
   roomCodeEl.textContent = roomId;
   updateLocalLabel();
   updatePeersCount();
