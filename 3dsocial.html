@@ -61,7 +61,9 @@ canvas { display: block; }
   position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100;
   display: flex; gap: 6px; padding: 8px 14px; border-radius: 16px;
   background: rgba(0,0,0,.45); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1);
+  max-width: 95vw; overflow-x: auto; scrollbar-width: none;
 }
+#action-bar::-webkit-scrollbar { display: none; }
 #action-bar button {
   padding: 10px 16px; border-radius: 10px; border: none;
   background: rgba(255,255,255,.08); color: #fff; font-size: 13px; cursor: pointer; transition: background .15s, transform .1s;
@@ -69,11 +71,18 @@ canvas { display: block; }
 }
 #action-bar button:hover { background: rgba(255,255,255,.18); transform: translateY(-2px); }
 #action-bar button:active { transform: scale(.95); }
+@media (max-width: 600px) {
+  #action-bar { bottom: 12px; padding: 6px 10px; gap: 4px; }
+  #action-bar button { padding: 8px 10px; font-size: 12px; }
+}
 
-/* ── Chat Panel ── */
+/* ── Chat Panel (bottom-left) ── */
 #chat-panel {
-  position: fixed; bottom: 80px; left: 20px; z-index: 100; width: 360px; max-height: 350px;
+  position: fixed; bottom: 16px; left: 16px; z-index: 100; width: 340px; max-height: 300px;
   display: flex; flex-direction: column; pointer-events: none;
+}
+@media (max-width: 600px) {
+  #chat-panel { width: 260px; max-height: 200px; bottom: 12px; left: 12px; }
 }
 #chat-messages {
   flex: 1; overflow-y: auto; padding: 8px 0; display: flex; flex-direction: column; gap: 4px;
@@ -104,6 +113,40 @@ canvas { display: block; }
 }
 #upload-btn:hover { background: rgba(255,255,255,.2); }
 #file-input { display: none; }
+#chat-toggle {
+  align-self: flex-start; margin-bottom: 6px; pointer-events: auto;
+  padding: 8px 16px; border-radius: 10px; border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.45); backdrop-filter: blur(8px); color: #fff; font-size: 13px;
+  cursor: pointer; transition: background .15s;
+}
+#chat-toggle:hover { background: rgba(255,255,255,.15); }
+
+/* ── Virtual Joystick ── */
+#joystick-zone {
+  position: fixed; right: 20px; top: 80px; z-index: 110;
+  width: 140px; height: 140px; display: none;
+  touch-action: none;
+}
+@media (max-width: 600px) {
+  #joystick-zone { width: 120px; height: 120px; right: 14px; top: 70px; }
+}
+#joystick-base {
+  position: absolute; inset: 0;
+  border-radius: 50%; border: 2px solid rgba(255,255,255,.15);
+  background: rgba(0,0,0,.2); backdrop-filter: blur(4px);
+}
+#joystick-thumb {
+  position: absolute; width: 50px; height: 50px;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(167,139,250,.6), rgba(110,92,231,.35));
+  border: 2px solid rgba(255,255,255,.25);
+  box-shadow: 0 2px 12px rgba(110,92,231,.3);
+  transition: box-shadow .15s;
+}
+@media (max-width: 600px) {
+  #joystick-thumb { width: 42px; height: 42px; }
+}
 
 /* ── Image Preview Modal ── */
 #img-modal {
@@ -245,14 +288,21 @@ canvas { display: block; }
   <button data-action="wiggle">🍑 扭屁屁</button>
 </div>
 
-<!-- Chat -->
+<!-- Chat (bottom-left) -->
 <div id="chat-panel" style="display:none">
+  <button id="chat-toggle">💬 聊天</button>
   <div id="chat-messages"></div>
   <div id="chat-input-wrap">
     <input id="chat-input" placeholder="輸入訊息... (Enter 發送，Esc 關閉)" autocomplete="off">
     <button id="upload-btn" title="上傳圖片">📷</button>
     <input type="file" id="file-input" accept="image/*">
   </div>
+</div>
+
+<!-- Virtual Joystick (mobile) -->
+<div id="joystick-zone" style="display:none">
+  <div id="joystick-base"></div>
+  <div id="joystick-thumb"></div>
 </div>
 
 <!-- Image Modal -->
@@ -362,6 +412,17 @@ const wbUploadBtn = document.getElementById('wb-upload-btn');
 const wbSendBtn = document.getElementById('wb-send-btn');
 const wbFileInput = document.getElementById('wb-file');
 const wbHint = document.getElementById('wb-hint');
+const chatToggle = document.getElementById('chat-toggle');
+const joystickZone = document.getElementById('joystick-zone');
+const joystickBase = document.getElementById('joystick-base');
+const joystickThumb = document.getElementById('joystick-thumb');
+
+// ── Joystick state ──
+let joystickActive = false;
+let joystickX = 0; // -1..1 (left/right rotation)
+let joystickY = 0; // -1..1 (forward/backward)
+let joystickTouchId = null;
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 
 // ━━━ Three.js Setup ━━━
 const scene = new THREE.Scene();
@@ -788,6 +849,74 @@ function readAndSendImage(file) {
 
 imgModal.addEventListener('click', () => imgModal.classList.remove('open'));
 
+// ── Chat toggle (mobile friendly) ──
+chatToggle.addEventListener('click', () => {
+  chatOpen = !chatOpen;
+  chatInputWrap.classList.toggle('open', chatOpen);
+  if (chatOpen) chatInput.focus();
+  else chatInput.blur();
+});
+
+// ── Virtual Joystick ──
+function getJoystickCenter() {
+  const rect = joystickBase.getBoundingClientRect();
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, radius: rect.width / 2 };
+}
+
+function updateJoystickThumb(dx, dy) {
+  const { radius } = getJoystickCenter();
+  const maxDist = radius - 10;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const clamped = Math.min(dist, maxDist);
+  const angle = Math.atan2(dy, dx);
+  const cx = clamped * Math.cos(angle);
+  const cy = clamped * Math.sin(angle);
+  joystickThumb.style.left = `calc(50% + ${cx}px)`;
+  joystickThumb.style.top = `calc(50% + ${cy}px)`;
+  joystickX = cx / maxDist;
+  joystickY = -cy / maxDist; // invert Y: up = positive (forward)
+}
+
+function resetJoystick() {
+  joystickActive = false;
+  joystickTouchId = null;
+  joystickX = 0;
+  joystickY = 0;
+  joystickThumb.style.left = '50%';
+  joystickThumb.style.top = '50%';
+}
+
+joystickZone.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  joystickTouchId = t.identifier;
+  joystickActive = true;
+  const c = getJoystickCenter();
+  updateJoystickThumb(t.clientX - c.x, t.clientY - c.y);
+}, { passive: false });
+
+joystickZone.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystickTouchId) {
+      const c = getJoystickCenter();
+      updateJoystickThumb(t.clientX - c.x, t.clientY - c.y);
+    }
+  }
+}, { passive: false });
+
+joystickZone.addEventListener('touchend', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystickTouchId) resetJoystick();
+  }
+});
+
+joystickZone.addEventListener('touchcancel', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystickTouchId) resetJoystick();
+  }
+});
+
 function sendChat(text) {
   addChatMessage(myName, myTitle, text);
   broadcastData({ type: 'chat', name: myName, title: myTitle, text });
@@ -1145,19 +1274,33 @@ function update() {
   const dt = clock.getDelta();
   const time = clock.getElapsedTime();
 
-  // ── Movement (Up=forward, Down=backward, Left=rotate left, Right=rotate right) ──
+  // ── Movement (keyboard + joystick) ──
   let moving = false;
   if (!chatOpen && !whiteboardOpen && localPlayer) {
-    // rotation: left/right (swapped for +Z-facing model viewed from behind)
+    // keyboard rotation
     if (keys['a'] || keys['arrowleft']) localPlayer.rotation.y += ROT_SPEED;
     if (keys['d'] || keys['arrowright']) localPlayer.rotation.y -= ROT_SPEED;
+    // joystick rotation
+    if (joystickActive && Math.abs(joystickX) > 0.15) {
+      localPlayer.rotation.y -= joystickX * ROT_SPEED * 1.5;
+    }
 
-    // forward/backward relative to facing direction (+Z = forward for Xbot model)
+    // keyboard forward/backward
     const forward = keys['w'] || keys['arrowup'];
     const backward = keys['s'] || keys['arrowdown'];
-    if (forward || backward) {
-      const dir = forward ? -1 : 1;
-      const speed = backward ? MOVE_SPEED * 0.6 : MOVE_SPEED;
+    // joystick forward/backward
+    const joyForward = joystickActive && joystickY > 0.15;
+    const joyBackward = joystickActive && joystickY < -0.15;
+
+    if (forward || backward || joyForward || joyBackward) {
+      let dir, speed;
+      if (forward || joyForward) {
+        dir = -1;
+        speed = joyForward ? MOVE_SPEED * Math.min(Math.abs(joystickY), 1) : MOVE_SPEED;
+      } else {
+        dir = 1;
+        speed = joyBackward ? MOVE_SPEED * 0.6 * Math.min(Math.abs(joystickY), 1) : MOVE_SPEED * 0.6;
+      }
       localPlayer.position.x -= Math.sin(localPlayer.rotation.y) * speed * dir;
       localPlayer.position.z -= Math.cos(localPlayer.rotation.y) * speed * dir;
       moving = true;
@@ -1297,6 +1440,7 @@ function enterRoom() {
   peersCountEl.style.display = 'block';
   actionBar.style.display = 'flex';
   chatPanel.style.display = 'flex';
+  if (isTouchDevice) joystickZone.style.display = 'block';
   roomCodeEl.textContent = roomId;
   updateLocalLabel();
   updatePeersCount();
