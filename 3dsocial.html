@@ -314,7 +314,7 @@ canvas { display: block; }
 <div id="img-modal"><img id="modal-img"></div>
 
 <!-- Whiteboard Hint -->
-<div id="wb-hint">走近白板可開啟留言板</div>
+<div id="wb-hint">按空白鍵開啟留言板</div>
 
 <!-- Whiteboard Modal -->
 <div id="wb-modal">
@@ -1037,6 +1037,11 @@ window.addEventListener('keydown', e => {
   if (whiteboardOpen && (e.target === wbText)) return;
   keys[e.key.toLowerCase()] = true;
 
+  if (e.key === ' ' && !chatOpen && !whiteboardOpen && wasNearWhiteboard) {
+    e.preventDefault();
+    openWhiteboard();
+    return;
+  }
   if (e.key === 'Enter' && !whiteboardOpen) {
     e.preventDefault();
     if (!chatOpen) {
@@ -1664,17 +1669,7 @@ function update() {
   ) : 999;
   const isNearWb = distToWb < WB_TRIGGER_DIST;
 
-  if (isNearWb && !wasNearWhiteboard && !whiteboardOpen) {
-    openWhiteboard();
-  }
-  if (!isNearWb && wasNearWhiteboard && !whiteboardOpen) {
-    wbHint.style.display = 'none';
-  }
-  if (isNearWb && !whiteboardOpen) {
-    wbHint.style.display = 'block';
-  } else {
-    wbHint.style.display = 'none';
-  }
+  wbHint.style.display = (isNearWb && !whiteboardOpen) ? 'block' : 'none';
   wasNearWhiteboard = isNearWb;
 
   // ── Animation ──
