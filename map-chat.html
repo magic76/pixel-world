@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Map Chat</title>
+</head>
+<body>
+
+<div id="lobby-overlay">
+  <div id="lobby">
+    <div class="lobby-icon">🗺️</div>
+    <h1>Map Chat</h1>
+    <p class="lobby-subtitle">在地圖上與朋友即時對話互動</p>
+    <input id="lobby-name" type="text" placeholder="你的名稱" maxlength="12" autocomplete="off">
+    <button class="lobby-btn btn-create" onclick="window.__app.createRoom()">建立房間</button>
+    <div class="join-row">
+      <input id="lobby-room" type="text" placeholder="房間代碼" maxlength="6"
+             style="text-transform:uppercase; letter-spacing:2px; font-weight:700" autocomplete="off">
+      <button class="lobby-btn btn-join" id="join-btn" onclick="window.__app.joinRoom()" disabled>加入</button>
+    </div>
+    <div id="lobby-status"></div>
+  </div>
+</div>
+
+<div id="app-container" style="display:none">
+  <div id="top-bar">
+    <div class="bar-left">
+      <span class="app-title">🗺️ Map Chat</span>
+      <span class="separator">|</span>
+      <span class="bar-label">房間:</span>
+      <span class="room-code" id="room-code" onclick="window.__app.copyRoomCode()" title="點擊複製">---</span>
+      <span class="copy-hint" id="copy-hint">已複製!</span>
+    </div>
+    <div class="bar-right">
+      <span id="online-count">1 人在線</span>
+      <span id="status">● 離線</span>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <div id="chat-panel">
+    <div id="chat-header">
+      <span>💬 聊天</span>
+      <button id="chat-toggle" onclick="window.__app.toggleChat()">▼</button>
+    </div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-row">
+      <div class="emote-row">
+        <button class="emote-btn" onclick="window.__app.sendEmote('👍')">👍</button>
+        <button class="emote-btn" onclick="window.__app.sendEmote('😂')">😂</button>
+        <button class="emote-btn" onclick="window.__app.sendEmote('🔥')">🔥</button>
+        <button class="emote-btn" onclick="window.__app.sendEmote('❤️')">❤️</button>
+        <button class="emote-btn" onclick="window.__app.sendEmote('👋')">👋</button>
+        <button class="emote-btn" onclick="window.__app.sendEmote('🎉')">🎉</button>
+      </div>
+      <div class="input-row">
+        <input id="chat-input" type="text" placeholder="輸入訊息，Enter 送出..." maxlength="200" autocomplete="off">
+        <button id="send-btn" onclick="window.__app.sendChatFromInput()">送出</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="notifications"></div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
