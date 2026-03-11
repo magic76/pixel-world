@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P 螢幕分享</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        video { width: 100%; max-width: 800px; border: 2px solid #ccc; margin-top: 10px; background: #000; }
+        .controls { margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h2>WebRTC P2P 螢幕分享</h2>
+    
+    <div class="controls">
+        <p><strong>我的 ID: </strong> <span id="my-id">產生中...</span></p>
+        <input type="text" id="remote-id" placeholder="輸入接收方的 ID">
+        <button id="share-btn">分享我的螢幕給他</button>
+    </div>
+
+    <h3>接收到的畫面：</h3>
+    <video id="remote-video" autoplay playsinline></video>
+
+    <script>
+        // 初始化 PeerJS (自動連線到免費的公共信令伺服器)
+        const peer = new Peer(); 
+        
+        // 1. 取得並顯示自己的 ID
+        peer.on('open', (id) => {
+            document.getElementById('my-id').innerText = id;
+        });
+
+        // 2. 接收方邏輯：當有人打來並傳送媒體流時
+        peer.on('call', (call) => {
+            // 接聽，但不回傳自己的畫面
+            call.answer(); 
+            // 拿到對方的畫面後，顯示在 video 標籤上
+            call.on('stream', (remoteStream) => {
+                document.getElementById('remote-video').srcObject = remoteStream;
+            });
+        });
+
+        // 3. 分享方邏輯：點選按鈕分享螢幕
+        document.getElementById('share-btn').addEventListener('click', async () => {
+            const remoteId = document.getElementById('remote-id').value.trim();
+            if (!remoteId) {
+                alert('請先輸入對方的 ID！');
+                return;
+            }
+
+            try {
+                // 呼叫原生 API 擷取螢幕
+                const localStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { cursor: "always" },
+                    audio: false // 若需分享系統音訊可改為 true，但瀏覽器支援度不同
+                });
+
+                // 撥打給對方，並把擷取到的螢幕畫面傳過去
+                const call = peer.call(remoteId, localStream);
+
+                // 當使用者透過瀏覽器原生 UI 點擊「停止分享」時，關閉連線
+                localStream.getVideoTracks()[0].onended = () => {
+                    call.close();
+                };
+
+            } catch (err) {
+                console.error('螢幕擷取失敗或被拒絕:', err);
+            }
+        });
+    </script>
+</body>
+</html>
