@@ -63,4 +63,195 @@
             btnMic: document.getElementById('btn-mic')
         };
 
-        // 建立
+        // 建立假軌道(黑畫面/靜音)，維持 WebRTC 連線不斷
+        const createDummyTrack = (kind) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1; canvas.height = 1;
+            const ctx = canvas.getContext('2d');
+            ctx.fillRect(0, 0, 1, 1);
+            if (kind === 'video') return canvas.captureStream().getVideoTracks()[0];
+            
+            const ctxAudio = new AudioContext();
+            const dest = ctxAudio.createMediaStreamDestination();
+            return dest.stream.getAudioTracks()[0];
+        };
+        localStream.addTrack(createDummyTrack('video'));
+        localStream.addTrack(createDummyTrack('audio'));
+        ui.myVideo.srcObject = localStream;
+
+        // 初始化 PeerJS
+        function initPeer(id, onOpen) {
+            peer = new Peer(id);
+            peer.on('open', (pid) => {
+                myId = pid;
+                ui.meText.innerText = pid;
+                if(onOpen) onOpen();
+            });
+
+            // 處理別人連線進來 (Data)
+            peer.on('connection', (conn) => handleConnection(conn));
+
+            // 處理別人打來 (Media)
+            peer.on('call', (call) => {
+                call.answer(localStream);
+                handleCall(call);
+            });
+        }
+
+        // 處理資料連線 (用於交換名單)
+        function handleConnection(conn) {
+            conn.on('open', () => {
+                if (!connectedPeers[conn.peer]) connectedPeers[conn.peer] = {};
+                connectedPeers[conn.peer].conn = conn;
+
+                // 若我是房主，把現有人員名單發給新進來的人
+                if (isHost) {
+                    const peerIds = Object.keys(connectedPeers).filter(id => id !== conn.peer);
+                    conn.send({ type: 'peers', peers: peerIds });
+                }
+            });
+
+            conn.on('data', (data) => {
+                if (data.type === 'peers') {
+                    // 收到房主發來的名單，主動連線給其他人 (達成 Full Mesh)
+                    data.peers.forEach(pid => connectToPeer(pid));
+                }
+            });
+
+            conn.on('close', () => removePeer(conn.peer));
+        }
+
+        // 處理媒體流
+        function handleCall(call) {
+            if (!connectedPeers[call.peer]) connectedPeers[call.peer] = {};
+            connectedPeers[call.peer].call = call;
+
+            call.on('stream', (remoteStream) => {
+                addVideoElement(call.peer, remoteStream);
+            });
+            call.on('close', () => removePeer(call.peer));
+        }
+
+        // 主動連線給某人
+        function connectToPeer(targetId) {
+            if (targetId === myId || connectedPeers[targetId]) return;
+            const conn = peer.connect(targetId);
+            handleConnection(conn);
+            const call = peer.call(targetId, localStream);
+            handleCall(call);
+        }
+
+        // UI 互動: 建立房間
+        document.getElementById('btn-create').addEventListener('click', () => {
+            const roomId = Math.random().toString(36).substring(2, 7);
+            isHost = true;
+            initPeer(roomId, () => enterRoom(roomId));
+        });
+
+        // UI 互動: 加入房間
+        document.getElementById('btn-join').addEventListener('click', () => {
+            const roomId = document.getElementById('input-room').value.trim();
+            if (!roomId) return;
+            isHost = false;
+            initPeer(null, () => {
+                enterRoom(roomId);
+                connectToPeer(roomId); // 連接房主
+            });
+        });
+
+        function enterRoom(roomId) {
+            ui.setup.style.display = 'none';
+            ui.room.style.display = 'block';
+            ui.roomText.innerText = roomId;
+        }
+
+        // UI 互動: 分享畫面
+        ui.btnScreen.addEventListener('click', async () => {
+            if (screenTrack) {
+                // 停止分享
+                screenTrack.stop();
+                screenTrack = null;
+                replaceTrackToAll(createDummyTrack('video'), 'video');
+                ui.btnScreen.classList.remove('active');
+                ui.btnScreen.innerText = '分享畫面';
+                ui.myContainer.style.display = 'none';
+            } else {
+                // 開始分享
+                try {
+                    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                    screenTrack = stream.getVideoTracks()[0];
+                    replaceTrackToAll(screenTrack, 'video');
+                    ui.btnScreen.classList.add('active');
+                    ui.btnScreen.innerText = '停止畫面';
+                    ui.myContainer.style.display = 'block';
+
+                    // 監聽原生「停止共用」按鈕
+                    screenTrack.onended = () => ui.btnScreen.click();
+                } catch(e) {}
+            }
+        });
+
+        // UI 互動: 開關麥克風
+        ui.btnMic.addEventListener('click', async () => {
+            if (micTrack) {
+                micTrack.stop();
+                micTrack = null;
+                replaceTrackToAll(createDummyTrack('audio'), 'audio');
+                ui.btnMic.classList.remove('active');
+                ui.btnMic.innerText = '開啟麥克風';
+            } else {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    micTrack = stream.getAudioTracks()[0];
+                    replaceTrackToAll(micTrack, 'audio');
+                    ui.btnMic.classList.add('active');
+                    ui.btnMic.innerText = '關閉麥克風';
+                } catch(e) {}
+            }
+        });
+
+        // 核心: 動態替換軌道，不用重連
+        function replaceTrackToAll(newTrack, kind) {
+            // 更新本地預覽
+            const senders = localStream.getTracks();
+            const oldTrack = senders.find(t => t.kind === kind);
+            if (oldTrack) localStream.removeTrack(oldTrack);
+            localStream.addTrack(newTrack);
+
+            // 更新所有現有連線
+            Object.values(connectedPeers).forEach(p => {
+                if (p.call && p.call.peerConnection) {
+                    const sender = p.call.peerConnection.getSenders().find(s => s.track && s.track.kind === kind);
+                    if (sender) sender.replaceTrack(newTrack);
+                }
+            });
+        }
+
+        // UI 互動: 退出房間
+        document.getElementById('btn-leave').addEventListener('click', () => {
+            if (screenTrack) screenTrack.stop();
+            if (micTrack) micTrack.stop();
+            if (peer) peer.destroy();
+            location.reload(); // 簡單暴力重置狀態
+        });
+
+        // 輔助: 新增別人畫面
+        function addVideoElement(id, stream) {
+            if (document.getElementById(`vid-${id}`)) return;
+            const container = document.createElement('div');
+            container.className = 'video-container';
+            container.id = `container-${id}`;
+            container.innerHTML = `<video id="vid-${id}" autoplay playsinline></video><div class="label">${id}</div>`;
+            ui.grid.appendChild(container);
+            document.getElementById(`vid-${id}`).srcObject = stream;
+        }
+
+        // 輔助: 移除別人畫面
+        function removePeer(id) {
+            delete connectedPeers[id];
+            const el = document.getElementById(`container-${id}`);
+            if (el) el.remove();
+        }
+    </script>
+</body>
+</html>
