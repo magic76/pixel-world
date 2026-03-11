@@ -3,124 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P2P 螢幕分享空間</title>
+    <title>P2P 會議室</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        video { width: 100%; max-width: 800px; border: 2px solid #ccc; background: #000; }
-        .controls { margin-bottom: 15px; padding: 10px; background: #f0f0f0; border-radius: 5px; }
-        button { margin-right: 10px; padding: 5px 10px; cursor: pointer; }
+        body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
+        .panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        button { padding: 8px 12px; margin-right: 8px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px; }
+        button.active { background: #4CAF50; color: white; border-color: #4CAF50; }
+        button.danger { background: #f44336; color: white; border-color: #f44336; }
+        #video-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+        .video-container { position: relative; background: #000; border-radius: 8px; overflow: hidden; width: 300px; height: 200px; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        .label { position: absolute; bottom: 5px; left: 5px; color: white; background: rgba(0,0,0,0.6); padding: 2px 6px; font-size: 12px; border-radius: 4px; }
     </style>
 </head>
 <body>
-    <h2>P2P 螢幕分享空間</h2>
-    
-    <div class="controls">
-        <p><strong>我的 5 碼 ID: </strong> <span id="my-id" style="color: blue; font-weight: bold;">產生中...</span></p>
-        <input type="text" id="target-id" placeholder="輸入當前分享者的 5 碼 ID" maxlength="5">
-        <button id="join-btn">加入觀看</button>
-        <button id="share-btn">分享我的畫面 (擠下對方)</button>
-        <button id="stop-btn" style="display:none; color: red;">停止分享</button>
+
+    <div id="setup-panel" class="panel">
+        <h2>WebRTC 會議室</h2>
+        <button id="btn-create">建立新房間</button>
+        <hr style="margin: 15px 0;">
+        <input type="text" id="input-room" placeholder="輸入 5 碼房號" maxlength="5">
+        <button id="btn-join">加入房間</button>
     </div>
 
-    <video id="video-player" autoplay playsinline controls></video>
+    <div id="room-panel" class="panel" style="display: none;">
+        <h3>房號: <span id="display-room" style="color: blue;"></span> (你的 ID: <span id="display-me"></span>)</h3>
+        <button id="btn-screen">分享畫面</button>
+        <button id="btn-mic">開啟麥克風</button>
+        <button id="btn-leave" class="danger">退出房間</button>
+    </div>
+
+    <div id="video-grid">
+        <div class="video-container" id="my-container" style="display:none;">
+            <video id="my-video" autoplay playsinline muted></video>
+            <div class="label">我</div>
+        </div>
+    </div>
 
     <script>
-        // 1. 產生 5 碼隨機 ID (英數混合)
-        const myId = Math.random().toString(36).substring(2, 7);
-        const peer = new Peer(myId);
+        let peer = null;
+        let myId = null;
+        let isHost = false;
+        let connectedPeers = {}; // { peerId: { conn: DataConnection, call: MediaConnection } }
         
-        let localStream = null;
-        let activeCalls = []; // 紀錄所有正在看我畫面的連線 (為了支援多人)
-        let dataConnection = null; // 用於接收/發送控制指令
+        let localStream = new MediaStream();
+        let screenTrack = null;
+        let micTrack = null;
 
-        const videoPlayer = document.getElementById('video-player');
-        const stopBtn = document.getElementById('stop-btn');
+        const ui = {
+            setup: document.getElementById('setup-panel'),
+            room: document.getElementById('room-panel'),
+            roomText: document.getElementById('display-room'),
+            meText: document.getElementById('display-me'),
+            grid: document.getElementById('video-grid'),
+            myContainer: document.getElementById('my-container'),
+            myVideo: document.getElementById('my-video'),
+            btnScreen: document.getElementById('btn-screen'),
+            btnMic: document.getElementById('btn-mic')
+        };
 
-        peer.on('open', (id) => {
-            document.getElementById('my-id').innerText = id;
-        });
-
-        // ================= 被動接收端邏輯 =================
-        // 處理接收到的畫面通話
-        peer.on('call', (call) => {
-            call.answer(); 
-            call.on('stream', (remoteStream) => {
-                videoPlayer.srcObject = remoteStream;
-            });
-        });
-
-        // 處理接收到的資料指令 (例如被擠下來)
-        peer.on('connection', (conn) => {
-            conn.on('data', (data) => {
-                if (data.command === 'takeover') {
-                    // 別人要搶畫面，關閉自己的分享
-                    stopMyScreen();
-                    alert(`畫面已被 ID: ${data.newHost} 搶走！`);
-                    // 實務上這裡可以再寫一段邏輯，自動幫當前所有觀眾重新 call data.newHost
-                }
-            });
-        });
-
-        // ================= 主動操作邏輯 =================
-
-        // 加入觀看 (純接收)
-        document.getElementById('join-btn').addEventListener('click', () => {
-            const targetId = document.getElementById('target-id').value.trim();
-            if (!targetId) return alert('請輸入 ID');
-            
-            // 建立一條資料通道備用 (用來發送搶奪指令)
-            dataConnection = peer.connect(targetId);
-            alert('已連線，等待對方分享畫面...');
-        });
-
-        // 分享我的畫面
-        document.getElementById('share-btn').addEventListener('click', async () => {
-            const targetId = document.getElementById('target-id').value.trim();
-
-            try {
-                // 擷取螢幕與系統語音
-                localStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: { cursor: "always" },
-                    audio: true // 包含系統語音 (瀏覽器彈窗需勾選分享音訊)
-                });
-                
-                videoPlayer.srcObject = localStream; // 自己預覽
-                stopBtn.style.display = 'inline-block';
-
-                // 如果目前有輸入目標 ID，代表你要「擠下」他
-                if (targetId && targetId !== myId) {
-                    if (!dataConnection) dataConnection = peer.connect(targetId);
-                    dataConnection.on('open', () => {
-                        // 告訴對方：換我分享了，你停掉
-                        dataConnection.send({ command: 'takeover', newHost: myId });
-                    });
-                }
-
-                // 監聽自己的畫面停止事件 (瀏覽器原生的停止分享按鈕)
-                localStream.getVideoTracks()[0].onended = stopMyScreen;
-
-                // 這裡簡化處理：等待別人打來要畫面 (多人觀看)，或主動打給特定人
-                // 如果要廣播給剛才被擠下房間內的所有人，需將 activeCalls 名單交接
-            } catch (err) {
-                console.error('擷取失敗:', err);
-            }
-        });
-
-        // 停止分享
-        stopBtn.addEventListener('click', stopMyScreen);
-
-        function stopMyScreen() {
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
-            videoPlayer.srcObject = null;
-            stopBtn.style.display = 'none';
-            // 斷開所有推播出去的畫面連線
-            activeCalls.forEach(call => call.close());
-            activeCalls = [];
-        }
-    </script>
-</body>
-</html>
+        // 建立
