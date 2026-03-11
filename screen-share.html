@@ -3,72 +3,124 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P2P 螢幕分享</title>
+    <title>P2P 螢幕分享空間</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body { font-family: sans-serif; padding: 20px; }
-        video { width: 100%; max-width: 800px; border: 2px solid #ccc; margin-top: 10px; background: #000; }
-        .controls { margin-bottom: 20px; }
+        video { width: 100%; max-width: 800px; border: 2px solid #ccc; background: #000; }
+        .controls { margin-bottom: 15px; padding: 10px; background: #f0f0f0; border-radius: 5px; }
+        button { margin-right: 10px; padding: 5px 10px; cursor: pointer; }
     </style>
 </head>
 <body>
-    <h2>WebRTC P2P 螢幕分享</h2>
+    <h2>P2P 螢幕分享空間</h2>
     
     <div class="controls">
-        <p><strong>我的 ID: </strong> <span id="my-id">產生中...</span></p>
-        <input type="text" id="remote-id" placeholder="輸入接收方的 ID">
-        <button id="share-btn">分享我的螢幕給他</button>
+        <p><strong>我的 5 碼 ID: </strong> <span id="my-id" style="color: blue; font-weight: bold;">產生中...</span></p>
+        <input type="text" id="target-id" placeholder="輸入當前分享者的 5 碼 ID" maxlength="5">
+        <button id="join-btn">加入觀看</button>
+        <button id="share-btn">分享我的畫面 (擠下對方)</button>
+        <button id="stop-btn" style="display:none; color: red;">停止分享</button>
     </div>
 
-    <h3>接收到的畫面：</h3>
-    <video id="remote-video" autoplay playsinline></video>
+    <video id="video-player" autoplay playsinline controls></video>
 
     <script>
-        // 初始化 PeerJS (自動連線到免費的公共信令伺服器)
-        const peer = new Peer(); 
+        // 1. 產生 5 碼隨機 ID (英數混合)
+        const myId = Math.random().toString(36).substring(2, 7);
+        const peer = new Peer(myId);
         
-        // 1. 取得並顯示自己的 ID
+        let localStream = null;
+        let activeCalls = []; // 紀錄所有正在看我畫面的連線 (為了支援多人)
+        let dataConnection = null; // 用於接收/發送控制指令
+
+        const videoPlayer = document.getElementById('video-player');
+        const stopBtn = document.getElementById('stop-btn');
+
         peer.on('open', (id) => {
             document.getElementById('my-id').innerText = id;
         });
 
-        // 2. 接收方邏輯：當有人打來並傳送媒體流時
+        // ================= 被動接收端邏輯 =================
+        // 處理接收到的畫面通話
         peer.on('call', (call) => {
-            // 接聽，但不回傳自己的畫面
             call.answer(); 
-            // 拿到對方的畫面後，顯示在 video 標籤上
             call.on('stream', (remoteStream) => {
-                document.getElementById('remote-video').srcObject = remoteStream;
+                videoPlayer.srcObject = remoteStream;
             });
         });
 
-        // 3. 分享方邏輯：點選按鈕分享螢幕
+        // 處理接收到的資料指令 (例如被擠下來)
+        peer.on('connection', (conn) => {
+            conn.on('data', (data) => {
+                if (data.command === 'takeover') {
+                    // 別人要搶畫面，關閉自己的分享
+                    stopMyScreen();
+                    alert(`畫面已被 ID: ${data.newHost} 搶走！`);
+                    // 實務上這裡可以再寫一段邏輯，自動幫當前所有觀眾重新 call data.newHost
+                }
+            });
+        });
+
+        // ================= 主動操作邏輯 =================
+
+        // 加入觀看 (純接收)
+        document.getElementById('join-btn').addEventListener('click', () => {
+            const targetId = document.getElementById('target-id').value.trim();
+            if (!targetId) return alert('請輸入 ID');
+            
+            // 建立一條資料通道備用 (用來發送搶奪指令)
+            dataConnection = peer.connect(targetId);
+            alert('已連線，等待對方分享畫面...');
+        });
+
+        // 分享我的畫面
         document.getElementById('share-btn').addEventListener('click', async () => {
-            const remoteId = document.getElementById('remote-id').value.trim();
-            if (!remoteId) {
-                alert('請先輸入對方的 ID！');
-                return;
-            }
+            const targetId = document.getElementById('target-id').value.trim();
 
             try {
-                // 呼叫原生 API 擷取螢幕
-                const localStream = await navigator.mediaDevices.getDisplayMedia({
+                // 擷取螢幕與系統語音
+                localStream = await navigator.mediaDevices.getDisplayMedia({
                     video: { cursor: "always" },
-                    audio: false // 若需分享系統音訊可改為 true，但瀏覽器支援度不同
+                    audio: true // 包含系統語音 (瀏覽器彈窗需勾選分享音訊)
                 });
+                
+                videoPlayer.srcObject = localStream; // 自己預覽
+                stopBtn.style.display = 'inline-block';
 
-                // 撥打給對方，並把擷取到的螢幕畫面傳過去
-                const call = peer.call(remoteId, localStream);
+                // 如果目前有輸入目標 ID，代表你要「擠下」他
+                if (targetId && targetId !== myId) {
+                    if (!dataConnection) dataConnection = peer.connect(targetId);
+                    dataConnection.on('open', () => {
+                        // 告訴對方：換我分享了，你停掉
+                        dataConnection.send({ command: 'takeover', newHost: myId });
+                    });
+                }
 
-                // 當使用者透過瀏覽器原生 UI 點擊「停止分享」時，關閉連線
-                localStream.getVideoTracks()[0].onended = () => {
-                    call.close();
-                };
+                // 監聽自己的畫面停止事件 (瀏覽器原生的停止分享按鈕)
+                localStream.getVideoTracks()[0].onended = stopMyScreen;
 
+                // 這裡簡化處理：等待別人打來要畫面 (多人觀看)，或主動打給特定人
+                // 如果要廣播給剛才被擠下房間內的所有人，需將 activeCalls 名單交接
             } catch (err) {
-                console.error('螢幕擷取失敗或被拒絕:', err);
+                console.error('擷取失敗:', err);
             }
         });
+
+        // 停止分享
+        stopBtn.addEventListener('click', stopMyScreen);
+
+        function stopMyScreen() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            videoPlayer.srcObject = null;
+            stopBtn.style.display = 'none';
+            // 斷開所有推播出去的畫面連線
+            activeCalls.forEach(call => call.close());
+            activeCalls = [];
+        }
     </script>
 </body>
 </html>
