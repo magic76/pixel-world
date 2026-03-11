@@ -27,11 +27,15 @@
         .video-container.enlarged video { object-fit: contain; }
         .video-container.enlarged .label { bottom: 20px; left: 20px; font-size: 18px; }
 
-        /* 聊天室樣式 */
         #chat-box { height: 150px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; background: #fafafa; border-radius: 4px; }
         .msg { margin-bottom: 5px; font-size: 15px; line-height: 1.4; }
         .msg .sender { font-weight: bold; color: #0056b3; }
         .msg.me .sender { color: #28a745; }
+
+        /* 成員名單樣式 */
+        #participant-list { list-style: none; padding: 0; margin: 0; font-size: 15px; }
+        #participant-list li { padding: 5px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+        .status-icon { font-size: 16px; margin-left: 5px; }
 
         @media (min-width: 600px) {
             body { padding: 20px; }
@@ -67,6 +71,11 @@
         </div>
     </div>
 
+    <div id="participants-panel" class="panel" style="display: none;">
+        <h3 style="margin-top: 0; font-size: 16px;">成員名單</h3>
+        <ul id="participant-list"></ul>
+    </div>
+
     <div id="video-grid">
         <div class="video-container" id="my-container" style="display:none;" onclick="this.classList.toggle('enlarged')">
             <video id="my-video" autoplay playsinline muted></video>
@@ -94,10 +103,15 @@
         let videoTrack = null; 
         let micTrack = null;
 
+        // 紀錄自己的狀態
+        let myStatus = { mic: false, video: false };
+
         const ui = {
             setup: document.getElementById('setup-panel'),
             room: document.getElementById('room-panel'),
             chatPanel: document.getElementById('chat-panel'),
+            participantsPanel: document.getElementById('participants-panel'),
+            participantList: document.getElementById('participant-list'),
             roomText: document.getElementById('display-room'),
             nameText: document.getElementById('display-name'),
             inputName: document.getElementById('input-name'),
@@ -142,8 +156,12 @@
 
         function handleConnection(conn) {
             conn.on('open', () => {
-                if (!connectedPeers[conn.peer]) connectedPeers[conn.peer] = {};
+                if (!connectedPeers[conn.peer]) connectedPeers[conn.peer] = { name: '連線中...', mic: false, video: false };
                 connectedPeers[conn.peer].conn = conn;
+                
+                // 新人加入，發送自己的狀態給他
+                broadcastStatus();
+
                 if (isHost) {
                     const peerIds = Object.keys(connectedPeers).filter(id => id !== conn.peer);
                     conn.send({ type: 'peers', peers: peerIds });
@@ -153,19 +171,28 @@
                 if (data.type === 'peers') {
                     data.peers.forEach(pid => connectToPeer(pid));
                 } else if (data.type === 'chat') {
-                    // 收到聊天訊息
                     appendMessage(data.name, data.msg, false);
+                } else if (data.type === 'status') {
+                    // 接收他人的狀態更新
+                    if (!connectedPeers[conn.peer]) connectedPeers[conn.peer] = {};
+                    connectedPeers[conn.peer].name = data.name;
+                    connectedPeers[conn.peer].mic = data.mic;
+                    connectedPeers[conn.peer].video = data.video;
+                    renderParticipantList();
                 }
             });
             conn.on('close', () => removePeer(conn.peer));
         }
 
         function handleCall(call) {
-            if (!connectedPeers[call.peer]) connectedPeers[call.peer] = {};
+            if (!connectedPeers[call.peer]) connectedPeers[call.peer] = { name: '連線中...', mic: false, video: false };
             connectedPeers[call.peer].call = call;
             const remoteName = call.metadata ? call.metadata.name : call.peer;
+            connectedPeers[call.peer].name = remoteName;
+            
             call.on('stream', (remoteStream) => addVideoElement(call.peer, remoteName, remoteStream));
             call.on('close', () => removePeer(call.peer));
+            renderParticipantList();
         }
 
         function connectToPeer(targetId) {
@@ -194,10 +221,41 @@
         function enterRoom(roomId) {
             ui.setup.style.display = 'none';
             ui.room.style.display = 'block';
-            ui.chatPanel.style.display = 'block'; // 顯示聊天室
+            ui.participantsPanel.style.display = 'block';
+            ui.chatPanel.style.display = 'block'; 
             ui.roomText.innerText = roomId;
+            renderParticipantList();
         }
 
+        // ================= 狀態廣播與渲染 =================
+        function broadcastStatus() {
+            const statusMsg = { type: 'status', name: myName, mic: myStatus.mic, video: myStatus.video };
+            Object.values(connectedPeers).forEach(p => {
+                if (p.conn && p.conn.open) p.conn.send(statusMsg);
+            });
+            renderParticipantList();
+        }
+
+        function renderParticipantList() {
+            ui.participantList.innerHTML = '';
+            
+            // 渲染自己
+            const myMicIcon = myStatus.mic ? '🎤' : '🔇';
+            const myVidIcon = myStatus.video ? '📷' : '🚫';
+            ui.participantList.innerHTML += `<li><span>${myName} (我)</span> <span><span class="status-icon">${myMicIcon}</span><span class="status-icon">${myVidIcon}</span></span></li>`;
+            
+            // 渲染其他人
+            for (let id in connectedPeers) {
+                const p = connectedPeers[id];
+                if (p.name) {
+                    const micIcon = p.mic ? '🎤' : '🔇';
+                    const vidIcon = p.video ? '📷' : '🚫';
+                    ui.participantList.innerHTML += `<li><span>${p.name}</span> <span><span class="status-icon">${micIcon}</span><span class="status-icon">${vidIcon}</span></span></li>`;
+                }
+            }
+        }
+
+        // ================= 影音控制 =================
         async function switchVideo(type) {
             if (videoTrack) {
                 videoTrack.stop();
@@ -206,6 +264,9 @@
                 ui.btnCamera.classList.remove('active');
                 ui.btnScreen.classList.remove('active');
                 ui.myContainer.style.display = 'none';
+                
+                myStatus.video = false;
+                broadcastStatus();
                 if (type === 'stop') return;
             }
 
@@ -222,6 +283,9 @@
                 videoTrack = stream.getVideoTracks()[0];
                 replaceTrackToAll(videoTrack, 'video');
                 ui.myContainer.style.display = 'block';
+                
+                myStatus.video = true;
+                broadcastStatus();
 
                 videoTrack.onended = () => switchVideo('stop');
             } catch (e) { 
@@ -251,12 +315,18 @@
                 micTrack = null;
                 replaceTrackToAll(createDummyTrack('audio'), 'audio');
                 ui.btnMic.classList.remove('active');
+                
+                myStatus.mic = false;
+                broadcastStatus();
             } else {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     micTrack = stream.getAudioTracks()[0];
                     replaceTrackToAll(micTrack, 'audio');
                     ui.btnMic.classList.add('active');
+                    
+                    myStatus.mic = true;
+                    broadcastStatus();
                 } catch(e) { alert("無法存取麥克風。"); }
             }
         });
@@ -291,21 +361,16 @@
             delete connectedPeers[id];
             const el = document.getElementById(`container-${id}`);
             if (el) el.remove();
+            renderParticipantList(); // 有人離開時更新名單
         }
 
-        // ================= 聊天室邏輯 =================
         function sendChat() {
             const text = ui.inputChat.value.trim();
             if (!text) return;
-            
             const msgData = { type: 'chat', name: myName, msg: text };
-            
-            // 廣播給所有已連線的人
             Object.values(connectedPeers).forEach(p => {
                 if (p.conn && p.conn.open) p.conn.send(msgData);
             });
-            
-            // 顯示在自己的畫面上
             appendMessage('我', text, true);
             ui.inputChat.value = '';
         }
@@ -315,7 +380,7 @@
             div.className = isMe ? 'msg me' : 'msg';
             div.innerHTML = `<span class="sender">${senderName}:</span> ${text}`;
             ui.chatBox.appendChild(div);
-            ui.chatBox.scrollTop = ui.chatBox.scrollHeight; // 自動捲動到底部
+            ui.chatBox.scrollTop = ui.chatBox.scrollHeight; 
         }
 
         ui.btnSend.addEventListener('click', sendChat);
