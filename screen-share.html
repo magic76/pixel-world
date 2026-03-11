@@ -8,19 +8,31 @@
     <style>
         body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
         .panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        input { padding: 5px; margin-right: 10px; }
         button { padding: 8px 12px; margin-right: 8px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px; }
         button.active { background: #4CAF50; color: white; border-color: #4CAF50; }
         button.danger { background: #f44336; color: white; border-color: #f44336; }
         #video-grid { display: flex; flex-wrap: wrap; gap: 10px; }
-        .video-container { position: relative; background: #000; border-radius: 8px; overflow: hidden; width: 300px; height: 200px; }
+        
+        /* 影片容器基本樣式 */
+        .video-container { position: relative; background: #000; border-radius: 8px; overflow: hidden; width: 300px; height: 200px; cursor: pointer; transition: 0.3s; }
         video { width: 100%; height: 100%; object-fit: cover; }
-        .label { position: absolute; bottom: 5px; left: 5px; color: white; background: rgba(0,0,0,0.6); padding: 2px 6px; font-size: 12px; border-radius: 4px; }
+        .label { position: absolute; bottom: 5px; left: 5px; color: white; background: rgba(0,0,0,0.6); padding: 2px 6px; font-size: 12px; border-radius: 4px; pointer-events: none; }
+        
+        /* 點擊放大的樣式 */
+        .video-container.enlarged {
+            position: fixed; top: 5%; left: 5%; width: 90%; height: 90%; z-index: 9999;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+        .video-container.enlarged video { object-fit: contain; }
     </style>
 </head>
 <body>
 
     <div id="setup-panel" class="panel">
         <h2>WebRTC 會議室</h2>
+        <input type="text" id="input-name" placeholder="輸入你的顯示名稱" required>
+        <br><br>
         <button id="btn-create">建立新房間</button>
         <hr style="margin: 15px 0;">
         <input type="text" id="input-room" placeholder="輸入 5 碼房號" maxlength="5">
@@ -28,135 +40,122 @@
     </div>
 
     <div id="room-panel" class="panel" style="display: none;">
-        <h3>房號: <span id="display-room" style="color: blue;"></span> (你的 ID: <span id="display-me"></span>)</h3>
+        <h3>房號: <span id="display-room" style="color: blue;"></span> | 用戶: <span id="display-name"></span></h3>
+        <button id="btn-camera">開啟鏡頭</button>
         <button id="btn-screen">分享畫面</button>
         <button id="btn-mic">開啟麥克風</button>
         <button id="btn-leave" class="danger">退出房間</button>
     </div>
 
     <div id="video-grid">
-        <div class="video-container" id="my-container" style="display:none;">
+        <div class="video-container" id="my-container" style="display:none;" onclick="this.classList.toggle('enlarged')">
             <video id="my-video" autoplay playsinline muted></video>
-            <div class="label">我</div>
+            <div class="label" id="my-label">我</div>
         </div>
     </div>
 
     <script>
         let peer = null;
         let myId = null;
+        let myName = "";
         let isHost = false;
-        let connectedPeers = {}; // { peerId: { conn: DataConnection, call: MediaConnection } }
+        let connectedPeers = {}; 
         
         let localStream = new MediaStream();
-        let screenTrack = null;
+        let videoTrack = null; // 共用一個影像軌道 (鏡頭或螢幕)
         let micTrack = null;
 
         const ui = {
             setup: document.getElementById('setup-panel'),
             room: document.getElementById('room-panel'),
             roomText: document.getElementById('display-room'),
-            meText: document.getElementById('display-me'),
+            nameText: document.getElementById('display-name'),
+            inputName: document.getElementById('input-name'),
             grid: document.getElementById('video-grid'),
             myContainer: document.getElementById('my-container'),
             myVideo: document.getElementById('my-video'),
+            myLabel: document.getElementById('my-label'),
+            btnCamera: document.getElementById('btn-camera'),
             btnScreen: document.getElementById('btn-screen'),
             btnMic: document.getElementById('btn-mic')
         };
 
-        // 建立假軌道(黑畫面/靜音)，維持 WebRTC 連線不斷
+        // 建立黑畫面與靜音軌道維持連線
         const createDummyTrack = (kind) => {
             const canvas = document.createElement('canvas');
             canvas.width = 1; canvas.height = 1;
-            const ctx = canvas.getContext('2d');
-            ctx.fillRect(0, 0, 1, 1);
+            canvas.getContext('2d').fillRect(0, 0, 1, 1);
             if (kind === 'video') return canvas.captureStream().getVideoTracks()[0];
-            
             const ctxAudio = new AudioContext();
-            const dest = ctxAudio.createMediaStreamDestination();
-            return dest.stream.getAudioTracks()[0];
+            return ctxAudio.createMediaStreamDestination().stream.getAudioTracks()[0];
         };
         localStream.addTrack(createDummyTrack('video'));
         localStream.addTrack(createDummyTrack('audio'));
         ui.myVideo.srcObject = localStream;
 
-        // 初始化 PeerJS
-        function initPeer(id, onOpen) {
-            peer = new Peer(id);
-            peer.on('open', (pid) => {
-                myId = pid;
-                ui.meText.innerText = pid;
-                if(onOpen) onOpen();
-            });
-
-            // 處理別人連線進來 (Data)
-            peer.on('connection', (conn) => handleConnection(conn));
-
-            // 處理別人打來 (Media)
-            peer.on('call', (call) => {
-                call.answer(localStream);
-                handleCall(call);
-            });
+        function checkName() {
+            myName = ui.inputName.value.trim();
+            if (!myName) { alert('請先輸入顯示名稱！'); return false; }
+            ui.nameText.innerText = myName;
+            ui.myLabel.innerText = myName + " (我)";
+            return true;
         }
 
-        // 處理資料連線 (用於交換名單)
+        function initPeer(id, onOpen) {
+            peer = new Peer(id);
+            peer.on('open', (pid) => { myId = pid; if(onOpen) onOpen(); });
+            peer.on('connection', handleConnection);
+            peer.on('call', (call) => { call.answer(localStream); handleCall(call); });
+        }
+
         function handleConnection(conn) {
             conn.on('open', () => {
                 if (!connectedPeers[conn.peer]) connectedPeers[conn.peer] = {};
                 connectedPeers[conn.peer].conn = conn;
-
-                // 若我是房主，把現有人員名單發給新進來的人
                 if (isHost) {
                     const peerIds = Object.keys(connectedPeers).filter(id => id !== conn.peer);
                     conn.send({ type: 'peers', peers: peerIds });
                 }
             });
-
             conn.on('data', (data) => {
-                if (data.type === 'peers') {
-                    // 收到房主發來的名單，主動連線給其他人 (達成 Full Mesh)
-                    data.peers.forEach(pid => connectToPeer(pid));
-                }
+                if (data.type === 'peers') data.peers.forEach(pid => connectToPeer(pid));
             });
-
             conn.on('close', () => removePeer(conn.peer));
         }
 
-        // 處理媒體流
         function handleCall(call) {
             if (!connectedPeers[call.peer]) connectedPeers[call.peer] = {};
             connectedPeers[call.peer].call = call;
+            
+            // 透過 metadata 取得對方的名字
+            const remoteName = call.metadata ? call.metadata.name : call.peer;
 
-            call.on('stream', (remoteStream) => {
-                addVideoElement(call.peer, remoteStream);
-            });
+            call.on('stream', (remoteStream) => addVideoElement(call.peer, remoteName, remoteStream));
             call.on('close', () => removePeer(call.peer));
         }
 
-        // 主動連線給某人
         function connectToPeer(targetId) {
             if (targetId === myId || connectedPeers[targetId]) return;
-            const conn = peer.connect(targetId);
+            // 連線時附帶自己的名字
+            const conn = peer.connect(targetId, { metadata: { name: myName } });
             handleConnection(conn);
-            const call = peer.call(targetId, localStream);
+            const call = peer.call(targetId, localStream, { metadata: { name: myName } });
             handleCall(call);
         }
 
-        // UI 互動: 建立房間
         document.getElementById('btn-create').addEventListener('click', () => {
+            if (!checkName()) return;
             const roomId = Math.random().toString(36).substring(2, 7);
             isHost = true;
             initPeer(roomId, () => enterRoom(roomId));
         });
 
-        // UI 互動: 加入房間
         document.getElementById('btn-join').addEventListener('click', () => {
+            if (!checkName()) return;
             const roomId = document.getElementById('input-room').value.trim();
             if (!roomId) return;
             isHost = false;
-            initPeer(null, () => {
-                enterRoom(roomId);
-                connectToPeer(roomId); // 連接房主
-            });
+            initPeer(null, () => { enterRoom(roomId); connectToPeer(roomId); });
         });
 
         function enterRoom(roomId) {
@@ -165,60 +164,67 @@
             ui.roomText.innerText = roomId;
         }
 
-        // UI 互動: 分享畫面
-        ui.btnScreen.addEventListener('click', async () => {
-            if (screenTrack) {
-                // 停止分享
-                screenTrack.stop();
-                screenTrack = null;
+        // 切換影像來源 (鏡頭 or 螢幕)
+        async function switchVideo(type) {
+            if (videoTrack) {
+                videoTrack.stop();
+                videoTrack = null;
                 replaceTrackToAll(createDummyTrack('video'), 'video');
+                ui.btnCamera.classList.remove('active');
                 ui.btnScreen.classList.remove('active');
-                ui.btnScreen.innerText = '分享畫面';
                 ui.myContainer.style.display = 'none';
-            } else {
-                // 開始分享
-                try {
-                    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                    screenTrack = stream.getVideoTracks()[0];
-                    replaceTrackToAll(screenTrack, 'video');
-                    ui.btnScreen.classList.add('active');
-                    ui.btnScreen.innerText = '停止畫面';
-                    ui.myContainer.style.display = 'block';
-
-                    // 監聽原生「停止共用」按鈕
-                    screenTrack.onended = () => ui.btnScreen.click();
-                } catch(e) {}
+                if (type === 'stop') return;
             }
+
+            try {
+                let stream;
+                if (type === 'camera') {
+                    stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    ui.btnCamera.classList.add('active');
+                } else if (type === 'screen') {
+                    stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                    ui.btnScreen.classList.add('active');
+                }
+                
+                videoTrack = stream.getVideoTracks()[0];
+                replaceTrackToAll(videoTrack, 'video');
+                ui.myContainer.style.display = 'block';
+
+                videoTrack.onended = () => switchVideo('stop');
+            } catch (e) { console.error("獲取影像失敗", e); }
+        }
+
+        ui.btnCamera.addEventListener('click', () => {
+            if (ui.btnCamera.classList.contains('active')) switchVideo('stop');
+            else switchVideo('camera');
         });
 
-        // UI 互動: 開關麥克風
+        ui.btnScreen.addEventListener('click', () => {
+            if (ui.btnScreen.classList.contains('active')) switchVideo('stop');
+            else switchVideo('screen');
+        });
+
         ui.btnMic.addEventListener('click', async () => {
             if (micTrack) {
                 micTrack.stop();
                 micTrack = null;
                 replaceTrackToAll(createDummyTrack('audio'), 'audio');
                 ui.btnMic.classList.remove('active');
-                ui.btnMic.innerText = '開啟麥克風';
             } else {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     micTrack = stream.getAudioTracks()[0];
                     replaceTrackToAll(micTrack, 'audio');
                     ui.btnMic.classList.add('active');
-                    ui.btnMic.innerText = '關閉麥克風';
                 } catch(e) {}
             }
         });
 
-        // 核心: 動態替換軌道，不用重連
         function replaceTrackToAll(newTrack, kind) {
-            // 更新本地預覽
-            const senders = localStream.getTracks();
-            const oldTrack = senders.find(t => t.kind === kind);
+            const oldTrack = localStream.getTracks().find(t => t.kind === kind);
             if (oldTrack) localStream.removeTrack(oldTrack);
             localStream.addTrack(newTrack);
 
-            // 更新所有現有連線
             Object.values(connectedPeers).forEach(p => {
                 if (p.call && p.call.peerConnection) {
                     const sender = p.call.peerConnection.getSenders().find(s => s.track && s.track.kind === kind);
@@ -227,26 +233,20 @@
             });
         }
 
-        // UI 互動: 退出房間
-        document.getElementById('btn-leave').addEventListener('click', () => {
-            if (screenTrack) screenTrack.stop();
-            if (micTrack) micTrack.stop();
-            if (peer) peer.destroy();
-            location.reload(); // 簡單暴力重置狀態
-        });
+        document.getElementById('btn-leave').addEventListener('click', () => location.reload());
 
-        // 輔助: 新增別人畫面
-        function addVideoElement(id, stream) {
+        function addVideoElement(id, name, stream) {
             if (document.getElementById(`vid-${id}`)) return;
             const container = document.createElement('div');
             container.className = 'video-container';
             container.id = `container-${id}`;
-            container.innerHTML = `<video id="vid-${id}" autoplay playsinline></video><div class="label">${id}</div>`;
+            // 加入點擊放大功能
+            container.onclick = function() { this.classList.toggle('enlarged'); };
+            container.innerHTML = `<video id="vid-${id}" autoplay playsinline></video><div class="label">${name}</div>`;
             ui.grid.appendChild(container);
             document.getElementById(`vid-${id}`).srcObject = stream;
         }
 
-        // 輔助: 移除別人畫面
         function removePeer(id) {
             delete connectedPeers[id];
             const el = document.getElementById(`container-${id}`);
